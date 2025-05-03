@@ -35,9 +35,35 @@ class AudioRecorder: NSObject, ObservableObject {
         self.fftSetup = vDSP_create_fftsetup(self.log2n, FFTRadix(kFFTRadix2))
 
         super.init()
+        
+        // Initialize audio session immediately to reduce first-record delay
         setupAudioSession()
         setupFrequencyBins()
+        
+        // Pre-warm audio components in the background for faster first recording
+//        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+//            self?.preWarmAudioComponents()
+//        }
     }
+    
+    // Pre-initializes audio components to reduce first-recording lag
+//    private func preWarmAudioComponents() {
+//        // Temporarily activate audio engine to pre-init AVAudioEngine components
+//        let tempEngine = AVAudioEngine()
+//        let format = tempEngine.inputNode.outputFormat(forBus: 0)
+//        tempEngine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { _, _ in }
+//        
+//        do {
+//            try tempEngine.start()
+//            // Run for a minimal amount of time just to initialize components
+//            Thread.sleep(forTimeInterval: 0.1)
+//            tempEngine.inputNode.removeTap(onBus: 0)
+//            tempEngine.stop()
+//        } catch {
+//            // Silent fail - this is just optimization
+//            print("Audio pre-warming failed: \(error.localizedDescription)")
+//        }
+//    }
 
     deinit {
         if let fftSetup = fftSetup {
