@@ -18,15 +18,33 @@ struct ContentView: View {
                 .fontWeight(.bold)
             
             ZStack {
+                // Background circle
                 Circle()
                     .fill(Color.gray.opacity(0.1))
                     .frame(width: 250, height: 250)
                 
-                // Audio visualization placeholder (can be replaced with actual visualization)
+                // Audio level visualization bubbles
                 if audioRecorder.isRecording {
+                    // Base pulse circle that's always visible
                     Circle()
-                        .stroke(Color.red, lineWidth: 5)
+                        .stroke(Color.red.opacity(0.7), lineWidth: 3)
                         .frame(width: 240, height: 240)
+                    
+                    // Multiple animated circles based on audio level
+                    ForEach(1...5, id: \.self) { index in
+                        let delay = Double(index) / 10.0
+                        
+                        Circle()
+                            .stroke(
+                                Color.red.opacity(0.7 - Double(index) * 0.1), 
+                                lineWidth: 3
+                            )
+                            .frame(
+                                width: 140 + (audioRecorder.audioLevel * 120) * CGFloat(index) / 3,
+                                height: 140 + (audioRecorder.audioLevel * 120) * CGFloat(index) / 3
+                            )
+                            .animation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0).delay(delay), value: audioRecorder.audioLevel)
+                    }
                 }
                 
                 // Recording button
@@ -37,11 +55,20 @@ struct ContentView: View {
                         audioRecorder.startRecording()
                     }
                 }) {
-                    Image(systemName: audioRecorder.isRecording ? "stop.circle.fill" : "mic.circle.fill")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 100, height: 100)
-                        .foregroundColor(audioRecorder.isRecording ? .red : .blue)
+                    ZStack {
+                        // Button background
+                        Circle()
+                            .fill(audioRecorder.isRecording ? Color.red : Color.blue)
+                            .frame(width: 100, height: 100)
+                            .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 2)
+                        
+                        // Button icon
+                        Image(systemName: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 40, height: 40)
+                            .foregroundColor(.white)
+                    }
                 }
                 .disabled(audioRecorder.isPlaying)
             }

@@ -7,11 +7,13 @@ class AudioRecorder: NSObject, ObservableObject {
     @Published var isRecording = false
     @Published var isPlaying = false
     @Published var audioURL: URL?
+    @Published var audioLevel: CGFloat = 0.0 // Audio level for visualization
     
     private var audioRecorder: AVAudioRecorder?
     private var audioPlayer: AVAudioPlayer?
     private var audioEngine = AVAudioEngine()
     private var audioBuffers: [AVAudioPCMBuffer] = []
+    private var levelUpdateTimer: Timer?
     
     override init() {
         super.init()
@@ -42,6 +44,7 @@ class AudioRecorder: NSObject, ObservableObject {
         
         do {
             audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
+            audioRecorder?.isMeteringEnabled = true // Enable metering for level visualization
             audioRecorder?.record()
             isRecording = true
             audioURL = audioFilename
@@ -74,6 +77,11 @@ class AudioRecorder: NSObject, ObservableObject {
         
         do {
             try audioEngine.start()
+            
+            // Start a timer to update the audio level UI
+            self.levelUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+                self?.updateAudioLevels()
+            }
         } catch {
             print("Could not start audio engine: \(error.localizedDescription)")
         }
@@ -82,6 +90,15 @@ class AudioRecorder: NSObject, ObservableObject {
     private func stopAudioEngine() {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
+        
+        // Stop the level update timer
+        levelUpdateTimer?.invalidate()
+        levelUpdateTimer = nil
+        
+        // Reset audio level
+        DispatchQueue.main.async {
+            self.audioLevel = 0.0
+        }
     }
     
     private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -98,8 +115,33 @@ class AudioRecorder: NSObject, ObservableObject {
             audioBuffers.append(bufferCopy)
         }
         
-        // Here you can perform real-time analysis or processing on the audio buffer
-        // For example, calculate audio levels, perform FFT, etc.
+        // Audio level calculation will be handled in updateAudioLevels()
+    }
+    
+    private func updateAudioLevels() {
+        guard let recorder = audioRecorder, recorder.isRecording else { return }
+        
+        recorder.updateMeters()
+        
+        // Get the peak power from the recorder
+        let averagePower = recorder.averagePower(forChannel: 0)
+        let peakPower = recorder.peakPower(forChannel: 0)
+        
+        // Convert dB to linear scale (dB is logarithmic)
+        // Normalize from -160dB (lowest) to 0dB (highest)
+        // -160dB to -50dB is essentially silence, so we'll adjust our scale
+        let minDb: Float = -50.0
+        let normalizedValue = max(0.0, (averagePower - minDb) / abs(minDb))
+        
+        // Add a bit more dynamics to make visualization more responsive
+        let scaledValue = pow(normalizedValue, 0.5) * 1.5
+        
+        // Update audio level on main thread
+        DispatchQueue.main.async {
+            // Apply smoothing to make animation more natural
+            let smoothing: CGFloat = 0.2
+            self.audioLevel = self.audioLevel * (1 - smoothing) + CGFloat(scaledValue) * smoothing
+        }
     }
     
     // MARK: - Playback Functions
