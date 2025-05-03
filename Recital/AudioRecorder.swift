@@ -164,13 +164,15 @@ class AudioRecorder: NSObject, ObservableObject {
         var realOut = [Float](repeating: 0, count: inputCount/2)
         var imagOut = [Float](repeating: 0, count: inputCount/2)
         
-        // Copy audio data to input buffer (use window function for better results)
-        // Take the most recent audio data
+        // Copy audio data to input buffer using vectorized window function
         let bufferLength = min(Int(buffer.frameLength), inputCount)
-        for i in 0..<bufferLength {
-            let hannWindow = 0.5 * (1 - cos(2 * .pi * Float(i) / Float(bufferLength - 1)))
-            realIn[i] = channelData[i] * hannWindow
-        }
+        
+        // Create Hann window coefficients using vDSP
+        var window = [Float](repeating: 0, count: bufferLength)
+        vDSP_hann_window(&window, vDSP_Length(bufferLength), Int32(0))
+        
+        // Apply window using vector multiply for better performance
+        vDSP_vmul(channelData, 1, window, 1, &realIn, 1, vDSP_Length(bufferLength))
         
         // Create complex input
         var splitComplex = DSPSplitComplex(realp: &realOut, imagp: &imagOut)
