@@ -5,6 +5,16 @@ import SwiftUI
 
 
 class AudioRecorder: NSObject, ObservableObject {
+    // MARK: - Static Configuration Values
+    private static let sampleRate: Float = 44100.0
+    private static let fftSize: Int = 1024
+    private static let numberOfChannels: Int = 2
+    
+    // Frequency ranges for color mapping
+    private static let lowFrequencyRange: ClosedRange<Float> = 20...150  // Bass
+    private static let midFrequencyRange: ClosedRange<Float> = 150...2000  // Mids
+    private static let highFrequencyRange: ClosedRange<Float> = 2000...20000  // Highs
+    
     // MARK: - Properties
     @Published var isRecording = false
     @Published var isPlaying = false
@@ -21,23 +31,29 @@ class AudioRecorder: NSObject, ObservableObject {
 
     // FFT related properties
     private let fftSetup: FFTSetup?
-    private let fftSize = 1024
+    private let fftSize: Int
     private let log2n: UInt
     private var frequencyBins: [Float] = []
 
-    // Frequency ranges for color mapping
-    private let lowFrequencyRange: ClosedRange<Float> = 20...150  // Bass
-    private let midFrequencyRange: ClosedRange<Float> = 150...2000  // Mids
-    private let highFrequencyRange: ClosedRange<Float> = 2000...20000  // Highs
+    // Frequency ranges for color mapping (instance references to static values)
+    private let lowFrequencyRange: ClosedRange<Float>
+    private let midFrequencyRange: ClosedRange<Float>
+    private let highFrequencyRange: ClosedRange<Float>
 
     override init() {
-        // Initialize FFT properties
-        let log2n = UInt(log2(Double(fftSize)))
+        // Initialize FFT properties from static values
+        self.fftSize = AudioRecorder.fftSize
+        let log2n = UInt(log2(Double(AudioRecorder.fftSize)))
         let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
         
         // Get audio URL
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let url = documentsDirectory.appendingPathComponent("recording.m4a")
+        
+        // Copy static frequency ranges to instance properties
+        self.lowFrequencyRange = AudioRecorder.lowFrequencyRange
+        self.midFrequencyRange = AudioRecorder.midFrequencyRange
+        self.highFrequencyRange = AudioRecorder.highFrequencyRange
         
         // Initialize properties before super.init
         self.log2n = log2n
@@ -49,8 +65,8 @@ class AudioRecorder: NSObject, ObservableObject {
         // Now we can safely use self
         let settings = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44100,
-            AVNumberOfChannelsKey: 2,
+            AVSampleRateKey: Int(AudioRecorder.sampleRate),
+            AVNumberOfChannelsKey: AudioRecorder.numberOfChannels,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
         
@@ -98,16 +114,18 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     private func setupFrequencyBins() {
-        // Calculate frequency bins based on sample rate (44100 Hz is standard)
-        let sampleRate: Float = 44100.0
-        frequencyBins = (0..<fftSize / 2).map { Float($0) * sampleRate / Float(fftSize) }
+        // Calculate frequency bins based on sample rate
+        frequencyBins = (0..<fftSize / 2).map { Float($0) * AudioRecorder.sampleRate / Float(fftSize) }
     }
 
     // MARK: - Audio Session Setup
     private func setupAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .default)
+            // Set category to playAndRecord with options to use the main speaker for playback
+            try audioSession.setCategory(.playAndRecord, 
+                                        mode: .default, 
+                                        options: [.defaultToSpeaker, .allowBluetooth])
             try audioSession.setActive(true)
             try audioSession.setAllowHapticsAndSystemSoundsDuringRecording(true)
         } catch {
@@ -352,8 +370,22 @@ class AudioRecorder: NSObject, ObservableObject {
         provideTactileFeedback(.light)
 
         do {
+            // Ensure audio session is configured to use the main speaker
+            // The .defaultToSpeaker option is only valid with .playAndRecord category
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playAndRecord, options: [.defaultToSpeaker])
+            try audioSession.setActive(true)
+            
             audioPlayer = try AVAudioPlayer(contentsOf: audioURL)
             audioPlayer?.delegate = self
+            
+            // Force output to speaker
+            do {
+                try audioSession.overrideOutputAudioPort(.speaker)
+            } catch {
+                print("Could not override audio port to speaker: \(error.localizedDescription)")
+            }
+            
             audioPlayer?.play()
             isPlaying = true
         } catch {
@@ -367,6 +399,16 @@ class AudioRecorder: NSObject, ObservableObject {
 
         audioPlayer?.stop()
         isPlaying = false
+        
+        // Restore audio session to playAndRecord for the next recording
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playAndRecord, 
+                                        mode: .default, 
+                                        options: [.defaultToSpeaker, .allowBluetooth])
+        } catch {
+            print("Could not restore audio session: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Helpers
