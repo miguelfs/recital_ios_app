@@ -20,7 +20,7 @@ struct HapticButtonStyle: ButtonStyle {
             // Add a slight scale effect for press visual feedback
             .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
             // Animate the scale change
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(.easeInOut(duration: 0.3), value: configuration.isPressed)
             .onChange(of: configuration.isPressed) { oldValue, newValue in
                 // Only provide haptic feedback when starting a recording (not when stopping)
                 if newValue && !isRecording {  // Pressed down AND not already recording

@@ -6,15 +6,20 @@ import SwiftUI
 
 class AudioRecorder: NSObject, ObservableObject {
     // MARK: - Static Configuration Values
-    private static let sampleRate: Float = 44100.0
+    private static let sampleRate: Float = 48000.0
     private static let fftSize: Int = 1024
-    private static let numberOfChannels: Int = 2
+    private static let numberOfChannels: Int = 1
+    
+    // Audio buffer and timing constants
+    private static let audioBufferSize: UInt32 = 1024
+    private static let levelUpdateInterval: TimeInterval = 0.01
     
     // Frequency ranges for color mapping
-    private static let lowFrequencyRange: ClosedRange<Float> = 20...150  // Bass
-    private static let midFrequencyRange: ClosedRange<Float> = 150...2000  // Mids
-    private static let highFrequencyRange: ClosedRange<Float> = 2000...20000  // Highs
+    private static let lowFrequencyRange: ClosedRange<Float> = 20...80  // Bass
+    private static let midFrequencyRange: ClosedRange<Float> = 150...400  // Mids
+    private static let highFrequencyRange: ClosedRange<Float> = 400...20000  // Highs
     
+
     // MARK: - Properties
     @Published var isRecording = false
     @Published var isPlaying = false
@@ -82,30 +87,8 @@ class AudioRecorder: NSObject, ObservableObject {
         setupAudioSession()
         setupFrequencyBins()
         
-        // Pre-warm audio components in the background for faster first recording
-//        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-//            self?.preWarmAudioComponents()
-//        }
     }
     
-    // Pre-initializes audio components to reduce first-recording lag
-//    private func preWarmAudioComponents() {
-//        // Temporarily activate audio engine to pre-init AVAudioEngine components
-//        let tempEngine = AVAudioEngine()
-//        let format = tempEngine.inputNode.outputFormat(forBus: 0)
-//        tempEngine.inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { _, _ in }
-//        
-//        do {
-//            try tempEngine.start()
-//            // Run for a minimal amount of time just to initialize components
-//            Thread.sleep(forTimeInterval: 0.1)
-//            tempEngine.inputNode.removeTap(onBus: 0)
-//            tempEngine.stop()
-//        } catch {
-//            // Silent fail - this is just optimization
-//            print("Audio pre-warming failed: \(error.localizedDescription)")
-//        }
-//    }
 
     deinit {
         if let fftSetup = fftSetup {
@@ -177,7 +160,7 @@ class AudioRecorder: NSObject, ObservableObject {
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: AudioRecorder.audioBufferSize, format: format) { [weak self] buffer, _ in
             self?.processAudioBuffer(buffer)
         }
 
@@ -185,7 +168,7 @@ class AudioRecorder: NSObject, ObservableObject {
             try audioEngine.start()
 
             // Start a timer to update the audio level UI
-            self.levelUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
+            self.levelUpdateTimer = Timer.scheduledTimer(withTimeInterval: AudioRecorder.levelUpdateInterval, repeats: true) {
                 [weak self] _ in
                 self?.updateAudioLevels()
             }
@@ -432,4 +415,3 @@ extension AudioRecorder: AVAudioPlayerDelegate {
         }
     }
 }
-
