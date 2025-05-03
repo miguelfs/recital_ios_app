@@ -3,11 +3,12 @@ import Accelerate
 import Foundation
 import SwiftUI
 
+
 class AudioRecorder: NSObject, ObservableObject {
     // MARK: - Properties
     @Published var isRecording = false
     @Published var isPlaying = false
-    @Published var audioURL: URL?
+    @Published var audioURL: URL
     @Published var audioLevel: CGFloat = 0.0  // Audio level for visualization
     @Published var dominantFrequency: Float = 0.0  // Dominant frequency from FFT
     @Published var frequencyColor: Color = .red  // Color based on frequency
@@ -31,10 +32,35 @@ class AudioRecorder: NSObject, ObservableObject {
 
     override init() {
         // Initialize FFT properties
-        self.log2n = UInt(log2(Double(fftSize)))
-        self.fftSetup = vDSP_create_fftsetup(self.log2n, FFTRadix(kFFTRadix2))
-
+        let log2n = UInt(log2(Double(fftSize)))
+        let fftSetup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
+        
+        // Get audio URL
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let url = documentsDirectory.appendingPathComponent("recording.m4a")
+        
+        // Initialize properties before super.init
+        self.log2n = log2n
+        self.fftSetup = fftSetup
+        self.audioURL = url
+        
         super.init()
+        
+        // Now we can safely use self
+        let settings = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44100,
+            AVNumberOfChannelsKey: 2,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
+        ]
+        
+        //TODO: wrap the try below.
+        do {
+            self.audioRecorder = try AVAudioRecorder(url: audioURL, settings: settings)
+            audioRecorder?.isMeteringEnabled = true  // Enable metering for level visualization
+        } catch {
+            print("Failed to initialize audio recorder: \(error.localizedDescription)")
+        }
         
         // Initialize audio session immediately to reduce first-record delay
         setupAudioSession()
@@ -91,24 +117,13 @@ class AudioRecorder: NSObject, ObservableObject {
 
     // MARK: - Recording Functions
     func startRecording() {
-        // Provide haptic feedback when starting to record
-        provideTactileFeedback(.medium)
-
-        let audioFilename = getDocumentsDirectory().appendingPathComponent("recording.m4a")
-
-        let settings = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44100,
-            AVNumberOfChannelsKey: 2,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-        ]
+        // Haptic feedback moved to the UI button press
+        
 
         do {
-            audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
-            audioRecorder?.isMeteringEnabled = true  // Enable metering for level visualization
+          //  audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
             audioRecorder?.record()
             isRecording = true
-            audioURL = audioFilename
 
             // Set up audio engine for buffer access
             startAudioEngine()
@@ -336,8 +351,6 @@ class AudioRecorder: NSObject, ObservableObject {
         // Lighter feedback for playback operations
         provideTactileFeedback(.light)
 
-        guard let audioURL = audioURL else { return }
-
         do {
             audioPlayer = try AVAudioPlayer(contentsOf: audioURL)
             audioPlayer?.delegate = self
@@ -357,10 +370,6 @@ class AudioRecorder: NSObject, ObservableObject {
     }
 
     // MARK: - Helpers
-    private func getDocumentsDirectory() -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    }
-
     // Access to audio buffers for processing
     func getAudioBuffers() -> [AVAudioPCMBuffer] {
         return audioBuffers

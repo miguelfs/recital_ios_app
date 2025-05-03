@@ -8,6 +8,30 @@
 import AVFoundation
 import SwiftUI
 
+// Custom button style that provides haptic feedback on press only when starting recording
+struct HapticButtonStyle: ButtonStyle {
+    let feedbackStyle: UIImpactFeedbackGenerator.FeedbackStyle
+    var isRecording: Bool  // Add recording state to control when feedback happens
+    
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            // Preserve the default pressing effect (opacity change)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            // Add a slight scale effect for press visual feedback
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            // Animate the scale change
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { oldValue, newValue in
+                // Only provide haptic feedback when starting a recording (not when stopping)
+                if newValue && !isRecording {  // Pressed down AND not already recording
+                    let generator = UIImpactFeedbackGenerator(style: feedbackStyle)
+                    generator.prepare()
+                    generator.impactOccurred()
+                }
+            }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var audioRecorder = AudioRecorder()
 
@@ -74,28 +98,64 @@ struct ContentView: View {
                     }
                 }) {
                     ZStack {
-                        // Button background with gradient
-                        Circle()
-                            .fill(
-                                audioRecorder.isRecording
-                                    ? LinearGradient(
+                        // Button background with gradient - using if/else to avoid transition
+                        if audioRecorder.isRecording {
+                            // Recording state background (red/orange)
+                            Circle()
+                                .fill(
+                                    LinearGradient(
                                         colors: [.red, .orange.opacity(0.8)],
                                         startPoint: .topLeading, endPoint: .bottomTrailing)
-                                    : LinearGradient(
+                                )
+                                .frame(width: 110, height: 110)
+                                .shadow(color: Color.black.opacity(0.3), radius: 6, x: 0, y: 3)
+                                // Only animate scale/opacity changes from button press, not color changes
+                                .transaction { transaction in
+                                    transaction.animation = nil
+                                }
+                        } else {
+                            // Ready to record state background (blue/purple)
+                            Circle()
+                                .fill(
+                                    LinearGradient(
                                         colors: [.blue, .purple.opacity(0.8)],
                                         startPoint: .topLeading, endPoint: .bottomTrailing)
-                            )
-                            .frame(width: 110, height: 110)
-                            .shadow(color: Color.black.opacity(0.3), radius: 6, x: 0, y: 3)
+                                )
+                                .frame(width: 110, height: 110)
+                                .shadow(color: Color.black.opacity(0.3), radius: 6, x: 0, y: 3)
+                                // Only animate scale/opacity changes from button press, not color changes
+                                .transaction { transaction in
+                                    transaction.animation = nil
+                                }
+                        }
 
-                        // Button icon
-                        Image(systemName: audioRecorder.isRecording ? "stop.fill" : "mic.fill")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 40, height: 40)
-                            .foregroundColor(.white)
+                        // Button icon - using direct conditional to prevent any transitions
+                        if audioRecorder.isRecording {
+                            // Stop icon - no animation
+                            Image(systemName: "stop.fill")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 40, height: 40)
+                                .foregroundColor(.white)
+                                .transaction { transaction in
+                                    // Explicitly disable animations for this view
+                                    transaction.animation = nil
+                                }
+                        } else {
+                            // Mic icon - no animation
+                            Image(systemName: "mic.fill")
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 40, height: 40)
+                                .foregroundColor(.white)
+                                .transaction { transaction in
+                                    // Explicitly disable animations for this view
+                                    transaction.animation = nil
+                                }
+                        }
                     }
                 }
+                .buttonStyle(HapticButtonStyle(feedbackStyle: .medium, isRecording: audioRecorder.isRecording)) // Apply haptic style with recording state
                 .disabled(audioRecorder.isPlaying)
             }
             .padding()
