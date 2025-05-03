@@ -9,8 +9,22 @@ struct ColorBrush: Identifiable, Equatable {
     var size: CGFloat
     var opacity: Double
     
+    // Animation properties
+    var offset: CGSize = .zero
+    var animationPhase: Double = Double.random(in: 0...2 * .pi)  // Random starting phase
+    var animationSpeed: Double = Double.random(in: 0.5...1.5)    // Random speed multiplier
+    var animationRadius: Double = Double.random(in: 10...30)     // Random movement range
+    
     static func == (lhs: ColorBrush, rhs: ColorBrush) -> Bool {
         lhs.id == rhs.id
+    }
+    
+    // Update the floating animation based on time
+    mutating func updateFloatingAnimation(time: TimeInterval) {
+        // Circular motion pattern
+        let xOffset = CGFloat(animationRadius * sin(time * animationSpeed + animationPhase))
+        let yOffset = CGFloat(animationRadius * cos(time * 0.7 * animationSpeed + animationPhase))
+        offset = CGSize(width: xOffset, height: yOffset)
     }
 }
 
@@ -49,13 +63,69 @@ class BackgroundPainter: ObservableObject {
     private var updateCounter = 0
     private let updateFrequency = 3  // Only add brushes every Nth update
     
+    // Animation timer and state
+    private var floatingAnimationTimer: Timer?
+    private var animationTime: TimeInterval = 0
+    private var lastUpdateTime: Date = Date()
+    
     // Track if audio level is significant enough to add new brushes
     private var shouldAddBrushes = false
+    
+    init() {
+        startFloatingAnimation()
+    }
+    
+    deinit {
+        stopFloatingAnimation()
+    }
+    
+    // Start the floating animation timer
+    private func startFloatingAnimation() {
+        stopFloatingAnimation() // Stop any existing timer
+        
+        // Reset animation time
+        animationTime = 0
+        lastUpdateTime = Date()
+        
+        // Create a timer that updates the floating animation
+        floatingAnimationTimer = Timer.scheduledTimer(withTimeInterval: 1/30, repeats: true) { [weak self] _ in
+            self?.updateFloatingAnimation()
+        }
+    }
+    
+    // Stop the floating animation timer
+    private func stopFloatingAnimation() {
+        floatingAnimationTimer?.invalidate()
+        floatingAnimationTimer = nil
+    }
+    
+    // Update the floating animation
+    private func updateFloatingAnimation() {
+        // Calculate time delta since last update
+        let currentTime = Date()
+        let deltaTime = currentTime.timeIntervalSince(lastUpdateTime)
+        lastUpdateTime = currentTime
+        
+        // Update animation time (slow motion)
+        animationTime += deltaTime * 0.2  // Slow motion factor
+        
+        // Update each brush's position
+        for i in 0..<brushes.count {
+            if i < brushes.count {  // Safety check for concurrent modifications
+                var brush = brushes[i]
+                brush.updateFloatingAnimation(time: animationTime)
+                brushes[i] = brush
+            }
+        }
+    }
     
     func startPainting() {
         isActive = true
         brushes.removeAll()
         updateCounter = 0
+        
+        // Ensure animation is running
+        startFloatingAnimation()
     }
     
     func stopPainting() {
@@ -63,6 +133,8 @@ class BackgroundPainter: ObservableObject {
         
         // Keep the canvas as is, but stop adding new brushes
         // No fading or removal of existing brushes
+        
+        // Animation continues even after stopping painting
     }
     
     func clearCanvas() {
@@ -302,6 +374,7 @@ struct BackgroundCanvasView: View {
                         .fill(brush.color)
                         .frame(width: screenSize.width * 1.5, height: brush.size)
                         .position(brush.position)
+                        .offset(brush.offset)  // Apply floating animation offset
                         .opacity(brush.opacity)
                         .blur(radius: brush.size * 0.1)  // Lighter blur for better visibility
                         
@@ -310,6 +383,7 @@ struct BackgroundCanvasView: View {
                         .fill(brush.color)
                         .frame(width: brush.size, height: brush.size)
                         .position(brush.position)
+                        .offset(brush.offset)  // Apply floating animation offset
                         .opacity(brush.opacity)
                         .blur(radius: brush.size * 0.1)  // Lighter blur
                         
@@ -318,6 +392,7 @@ struct BackgroundCanvasView: View {
                         .fill(brush.color)
                         .frame(width: brush.size, height: brush.size * 0.7)
                         .position(brush.position)
+                        .offset(brush.offset)  // Apply floating animation offset
                         .opacity(brush.opacity)
                         .blur(radius: brush.size * 0.15)
                 }
