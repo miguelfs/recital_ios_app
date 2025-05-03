@@ -27,7 +27,7 @@ struct ContentView: View {
                 if audioRecorder.isRecording {
                     // Base pulse circle that's always visible
                     Circle()
-                        .stroke(Color.red.opacity(0.7), lineWidth: 3)
+                        .stroke(audioRecorder.frequencyColor.opacity(0.7), lineWidth: 3)
                         .frame(width: 240, height: 240)
                     
                     // Multiple animated circles based on audio level
@@ -36,7 +36,7 @@ struct ContentView: View {
                         
                         Circle()
                             .stroke(
-                                Color.red.opacity(0.7 - Double(index) * 0.1), 
+                                audioRecorder.frequencyColor.opacity(0.7 - Double(index) * 0.1), 
                                 lineWidth: 3
                             )
                             .frame(
@@ -44,7 +44,15 @@ struct ContentView: View {
                                 height: 140 + (audioRecorder.audioLevel * 120) * CGFloat(index) / 3
                             )
                             .animation(.spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0).delay(delay), value: audioRecorder.audioLevel)
+                            .animation(.easeInOut(duration: 0.3).delay(delay), value: audioRecorder.frequencyColor)
                     }
+                    
+                    // Debug info for frequency (optional - can be removed)
+                    Text("Freq: \(Int(audioRecorder.dominantFrequency)) Hz")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .opacity(0.7)
+                        .offset(y: -120)
                 }
                 
                 // Recording button
