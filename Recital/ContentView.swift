@@ -41,6 +41,9 @@ struct ContentView: View {
     @State private var showingNamePrompt = false
     @State private var recordingName = ""
     
+    // State for live transcription display
+    @State private var showLiveTranscription = true
+    
     init() {
         // Create RecordingManager with backgroundPainter
         let manager = RecordingManager()
@@ -50,6 +53,9 @@ struct ContentView: View {
     // Called when the view appears to connect components
     private func connectComponents() {
         recordingManager.setBackgroundPainter(backgroundPainter)
+        
+        // Connect transcription service to audio recorder
+        audioRecorder.transcriptionService = recordingManager.transcriptionService
     }
     
     // Timer for updating background during recording
@@ -227,6 +233,90 @@ struct ContentView: View {
                     .padding()
                     .frame(height: 350)
                     .fixedSize(horizontal: false, vertical: true)  // Fix vertical size to prevent layout changes
+                    
+                    Spacer()
+                    
+                    // Transcription display area
+                    VStack {
+                        // Show permission warning if needed
+                        if Bundle.main.infoDictionary?["NSSpeechRecognitionUsageDescription"] == nil {
+                            VStack(spacing: 4) {
+                                Text("Transcription Unavailable")
+                                    .font(.headline)
+                                    .foregroundColor(.red)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.horizontal)
+                                
+                                Text("This app requires NSSpeechRecognitionUsageDescription in Info.plist")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding()
+                                    .background(Color(UIColor.systemBackground).opacity(0.7))
+                                    .cornerRadius(12)
+                                    .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                            }
+                            .padding(.horizontal)
+                            .frame(maxHeight: 120)
+                            .transition(.opacity)
+                        }
+                        // Show live transcription when recording
+                        else if audioRecorder.isRecording && showLiveTranscription {
+                            VStack(spacing: 4) {
+                                Text("Transcription")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal)
+                                
+                                ScrollView {
+                                    Text(recordingManager.transcriptionService.liveTranscription.isEmpty ? 
+                                         "Listening..." : recordingManager.transcriptionService.liveTranscription)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding()
+                                        .lineLimit(nil) // Allow multiple lines
+                                        .fixedSize(horizontal: false, vertical: true) // Allow vertical expansion
+                                }
+                                .background(Color(UIColor.systemBackground).opacity(0.7))
+                                .cornerRadius(12)
+                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                            }
+                            .padding(.horizontal)
+                            .frame(maxHeight: 120)
+                            .transition(.opacity)
+                        }
+                        
+                        // Show transcription when playing back a recording
+                        if recordingManager.isPlaying && !recordingManager.currentTranscription.isEmpty {
+                            VStack(spacing: 4) {
+                                Text("Transcription")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal)
+                                
+                                ScrollView {
+                                    Text(recordingManager.currentTranscription)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding()
+                                }
+                                .background(Color(UIColor.systemBackground).opacity(0.7))
+                                .cornerRadius(12)
+                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                            }
+                            .padding(.horizontal)
+                            .frame(height: 120)
+                            .transition(.opacity)
+                        }
+                    }
+                    .animation(.easeInOut, value: audioRecorder.isRecording)
+                    .animation(.easeInOut, value: recordingManager.isPlaying)
+                    .animation(.easeInOut, value: recordingManager.currentTranscription)
                     
                     Spacer()
                     
