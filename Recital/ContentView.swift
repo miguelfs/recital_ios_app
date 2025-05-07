@@ -347,6 +347,13 @@ struct ContentView: View {
         // Stop the background update timer
         stopBackgroundUpdates()
         
+        // Add a summary bubble based on the recording stats
+        backgroundPainter.addSummaryBubble(
+            averageFrequency: audioRecorder.averageFrequency,
+            maxLevel: audioRecorder.maxLevel,
+            in: viewSize
+        )
+        
         // Add animation for background transition
         withAnimation(.easeInOut(duration: 0.5)) {
             // Any additional animations when stopping recording
@@ -375,8 +382,8 @@ struct ContentView: View {
     private func updateBackgroundPainting() {
         guard audioRecorder.isRecording else { return }
         
-        // Always update with current audio level (the painter will handle thresholding)
-        // This allows the painter to track the audio level even when it's below the threshold
+        // Just update the audio level in the background painter for animation purposes
+        // (we're no longer adding bubbles during recording)
         backgroundPainter.update(
             frequency: audioRecorder.dominantFrequency,
             level: audioRecorder.audioLevel,

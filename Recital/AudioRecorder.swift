@@ -27,6 +27,20 @@ class AudioRecorder: NSObject, ObservableObject {
     @Published var audioLevel: CGFloat = 0.0  // Audio level for visualization
     @Published var dominantFrequency: Float = 0.0  // Dominant frequency from FFT
     @Published var frequencyColor: Color = .red  // Color based on frequency
+    
+    // Recording summary statistics
+    private var frequencySum: Float = 0.0
+    private var frequencySamples: Int = 0
+    private var maxAudioLevel: CGFloat = 0.0
+    
+    // Public computed properties for summary data
+    var averageFrequency: Float {
+        return frequencySamples > 0 ? frequencySum / Float(frequencySamples) : 0
+    }
+    
+    var maxLevel: CGFloat {
+        return maxAudioLevel
+    }
 
     private var audioRecorder: AVAudioRecorder?
     private var audioPlayer: AVAudioPlayer?
@@ -120,6 +134,10 @@ class AudioRecorder: NSObject, ObservableObject {
     func startRecording() {
         // Haptic feedback moved to the UI button press
         
+        // Reset recording statistics
+        frequencySum = 0.0
+        frequencySamples = 0
+        maxAudioLevel = 0.0
 
         do {
           //  audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
@@ -267,8 +285,15 @@ class AudioRecorder: NSObject, ObservableObject {
             // Update dominant frequency (with smoothing)
             let smoothingFactor: Float = 0.2
             DispatchQueue.main.async {
-                self.dominantFrequency =
-                    self.dominantFrequency * (1 - smoothingFactor) + peakFrequency * smoothingFactor
+                let newFrequency = self.dominantFrequency * (1 - smoothingFactor) + peakFrequency * smoothingFactor
+                self.dominantFrequency = newFrequency
+                
+                // Track frequency for summary statistics
+                if self.isRecording && newFrequency > 20 { // Only track meaningful frequencies
+                    self.frequencySum += newFrequency
+                    self.frequencySamples += 1
+                }
+                
                 self.updateFrequencyColor()
             }
         }
@@ -343,7 +368,13 @@ class AudioRecorder: NSObject, ObservableObject {
         DispatchQueue.main.async {
             // Apply smoothing to make animation more natural
             let smoothing: CGFloat = 0.2
-            self.audioLevel = self.audioLevel * (1 - smoothing) + CGFloat(scaledValue) * smoothing
+            let newLevel = self.audioLevel * (1 - smoothing) + CGFloat(scaledValue) * smoothing
+            self.audioLevel = newLevel
+            
+            // Track max level for summary statistics
+            if self.isRecording && newLevel > self.maxAudioLevel {
+                self.maxAudioLevel = newLevel
+            }
         }
     }
 
