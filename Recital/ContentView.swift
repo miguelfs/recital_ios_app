@@ -68,10 +68,9 @@ struct ContentView: View {
                 
                 // Main content
                 VStack(spacing: 30) {
-                    // Top bar with title and recordings button
-                    HStack {
-                        Spacer()
-                        
+                    // Using ZStack for overlapping elements with better positioning
+                    ZStack(alignment: .topTrailing) {
+                        // Centered title - not inside an HStack
                         if !audioRecorder.isRecording {
                             // Title only appears when not recording for cleaner UI
                             Text("Recital")
@@ -79,27 +78,28 @@ struct ContentView: View {
                                 .foregroundColor(.purple.opacity(0.8))
                                 .shadow(color: .black.opacity(0.2), radius: 2, x: 1, y: 1)
                                 .transition(.opacity)
+                                .frame(maxWidth: .infinity) // Center in the available space
                         }
                         
-                        Spacer()
-                        
-                        // Recordings list button
+                        // Recordings list button in the top right
                         Button(action: {
                             showingRecordingsList = true
                         }) {
                             Image(systemName: "list.bullet")
                                 .font(.system(size: 22))
                                 .foregroundColor(.purple)
-                                .frame(width: 44, height: 44)
+                                .frame(width: 40, height: 40)
                                 .background(
                                     Circle()
                                         .fill(Color.white.opacity(0.15))
                                         .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
                                 )
                         }
+                        .padding(.top, 10)
                         .padding(.trailing, 20)
                     }
-                    .padding(.top, 20)
+                    .frame(height: audioRecorder.isRecording ? 60 : 80) // Fixed height for this area
+                    .padding(.top, 16)
                     
                     Spacer()
                     

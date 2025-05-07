@@ -218,6 +218,7 @@ protocol BackgroundPaintingStrategy {
 // MARK: - Painting Style Enum
 enum PaintingStyle: String, CaseIterable, Identifiable {
     case bubbles = "Bubbles"
+    case waves = "Waves"
     
     var id: String { self.rawValue }
 }
@@ -251,6 +252,12 @@ class BackgroundPainter: ObservableObject {
     private let backgroundStateKey = "com.recital.backgroundState"
     
     init() {
+        // Load saved style preference if available
+        if let savedStyleString = UserDefaults.standard.string(forKey: "com.recital.preferredStyle"),
+           let savedStyle = PaintingStyle(rawValue: savedStyleString) {
+            currentStyle = savedStyle
+        }
+        
         // Load any saved background state
         loadBackgroundState()
         startFloatingAnimation()
@@ -435,6 +442,20 @@ class BackgroundPainter: ObservableObject {
         saveBackgroundState()
     }
     
+    // Allow switching between different styles (bubbles/waves)
+    func cycleToNextStyle() {
+        let allStyles = PaintingStyle.allCases
+        guard let currentIndex = allStyles.firstIndex(of: currentStyle) else { return }
+        let nextIndex = (currentIndex + 1) % allStyles.count
+        currentStyle = allStyles[nextIndex]
+        
+        // Save the style preference
+        UserDefaults.standard.set(currentStyle.rawValue, forKey: "com.recital.preferredStyle")
+        
+        // Also save the background state since the visual appearance has changed
+        saveBackgroundState()
+    }
+    
     // Helper to find a position for the new bubble that avoids overlap with existing bubbles
     private func findOptimalBubblePosition(in screenSize: CGSize) -> CGPoint {
         // Define safe margins to keep bubbles away from screen edges
@@ -525,12 +546,16 @@ struct DefaultPaintingStrategy: BackgroundPaintingStrategy {
         screenSize: CGSize,
         strategy: PaintingStyle
     ) -> [ColorBrush] {
-        return createBrushes(frequency: frequency, level: level, color: color, screenSize: screenSize)
+        switch strategy {
+        case .bubbles:
+            return createBubbleBrushes(frequency: frequency, level: level, color: color, screenSize: screenSize)
+        case .waves:
+            return createWaveBrushes(frequency: frequency, level: level, color: color, screenSize: screenSize)
+        }
     }
     
-    
     // Create bubble brushes - circular spots that appear at random locations
-    private func createBrushes(
+    private func createBubbleBrushes(
         frequency: Float,
         level: CGFloat,
         color: Color,
@@ -577,6 +602,83 @@ struct DefaultPaintingStrategy: BackgroundPaintingStrategy {
         return newBrushes
     }
     
+    // Strategy for waves - flowing patterns that move across the screen
+    private func createWaveBrushes(
+        frequency: Float,
+        level: CGFloat,
+        color: Color,
+        screenSize: CGSize
+    ) -> [ColorBrush] {
+        var newBrushes: [ColorBrush] = []
+        
+        // Create a few wave elements at different positions
+        let numberOfWaves = min(Int(level * 4) + 1, 4)
+        
+        for _ in 0..<numberOfWaves {
+            // Position waves at varying heights with emphasis on screen edges
+            let distribution = Double.random(in: 0...1)
+            let yPosition: CGFloat
+            
+            if distribution < 0.7 {
+                // 70% chance to place near top or bottom for a flowing effect
+                if Bool.random() {
+                    // Top area
+                    yPosition = CGFloat.random(in: 50...screenSize.height * 0.3)
+                } else {
+                    // Bottom area
+                    yPosition = CGFloat.random(in: screenSize.height * 0.7...screenSize.height - 50)
+                }
+            } else {
+                // 30% chance to place in middle area
+                yPosition = CGFloat.random(in: screenSize.height * 0.3...screenSize.height * 0.7)
+            }
+            
+            // Spread across the full width
+            let xPosition = CGFloat.random(in: 50...screenSize.width - 50)
+            
+            let position = CGPoint(x: xPosition, y: yPosition)
+            
+            // Make wave size depend on audio level and frequency
+            // Lower frequencies make larger waves
+            let frequencyFactor = max(0.3, min(1.0, 1.0 - CGFloat(frequency) / 4000.0))
+            // Make waves wider than tall
+            let size = (30.0 + level * 70.0 * frequencyFactor) * CGFloat.random(in: 0.8...1.2)
+            
+            // Create color variation based on position and frequency
+            let baseColor = UIColor(color)
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            baseColor.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            
+            // Vertical position affects color - gradual shift from top to bottom
+            let verticalFactor = yPosition / screenSize.height
+            let hueAdjust = Double(verticalFactor) * 0.2 + Double.random(in: -0.05...0.05)
+            
+            let adjustedColor = Color(
+                hue: Double(h) + hueAdjust,
+                saturation: Double(s) * (0.9 + Double.random(in: -0.1...0.1)),
+                brightness: Double(b) * (0.9 + Double.random(in: -0.1...0.1)),
+                opacity: Double(a)
+            )
+            
+            // Create wave brush with higher movement values
+            var brush = ColorBrush(
+                position: position,
+                color: adjustedColor,
+                size: size,
+                opacity: 0.65  // Slightly higher opacity for waves
+            )
+            
+            // Customize animation properties for wave-like movement
+            brush.animationSpeed = Double.random(in: 0.15...0.4)  // Slower for wave-like motion
+            brush.animationRadius = Double.random(in: 40...100)   // Larger radius for flowing movement
+            brush.buoyancyFactor = Double.random(in: 0.5...1.2)   // Less vertical tendency
+            brush.driftFactor = Double.random(in: 0.5...1.5) * (Bool.random() ? 1 : -1)  // Strong horizontal drift
+            
+            newBrushes.append(brush)
+        }
+        
+        return newBrushes
+    }
 }
 
 // MARK: - Background Canvas View
@@ -591,15 +693,38 @@ struct BackgroundCanvasView: View {
                 .opacity(0.5)
                 .edgesIgnoringSafeArea(.all)
             
-            // Render each brush as a circle (bubble)
+            // Render each brush based on the current style
             ForEach(painter.brushes) { brush in
-                Circle()
-                    .fill(brush.color)
-                    .frame(width: brush.size, height: brush.size)
-                    .position(brush.position)
-                    .offset(brush.offset)  // Apply floating animation offset
-                    .opacity(brush.opacity)
-                    .blur(radius: brush.size * 0.1)  // Lighter blur
+                // Use a specific shape based on the painting style
+                Group {
+                    if painter.currentStyle == .bubbles {
+                        // Bubble shape (circle)
+                        Circle()
+                            .fill(brush.color)
+                            .frame(width: brush.size, height: brush.size)
+                            .position(brush.position)
+                            .offset(brush.offset)  // Apply floating animation offset
+                            .opacity(brush.opacity)
+                            .blur(radius: brush.size * 0.1)  // Lighter blur for bubbles
+                    } else {
+                        // Wave shape (ellipse - more horizontal)
+                        Ellipse()
+                            .fill(brush.color)
+                            .frame(width: brush.size * 1.7, height: brush.size * 0.6)  // More elongated for waves
+                            .position(brush.position)
+                            .offset(brush.offset)  // Apply floating animation offset
+                            .opacity(brush.opacity)
+                            .blur(radius: brush.size * 0.15)  // Slightly more blur for waves
+                            .rotationEffect(
+                                // Slight rotation based on movement to create flow effect
+                                Angle(degrees: Double(
+                                    -10 + (brush.offset.width / CGFloat(brush.animationRadius)) * 20)
+                                )
+                            )
+                    }
+                }
+                // Add a common shadow effect for both styles
+                .shadow(color: brush.color.opacity(0.3), radius: 3, x: 1, y: 1)
             }
         }
         .drawingGroup()  // Use Metal rendering for better performance
