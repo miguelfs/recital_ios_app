@@ -2,29 +2,135 @@ import SwiftUI
 import Combine
 
 // MARK: - Color Brush Model
-struct ColorBrush: Identifiable, Equatable {
-    let id = UUID()
+struct ColorBrush: Identifiable, Equatable, Codable {
+    let id: UUID
     var position: CGPoint
     var color: Color
     var size: CGFloat
     var opacity: Double
+    
+    init(id: UUID = UUID(), position: CGPoint, color: Color, size: CGFloat, opacity: Double) {
+        self.id = id
+        self.position = position
+        self.color = color
+        self.size = size
+        self.opacity = opacity
+    }
     
     // Animation properties
     var offset: CGSize = .zero
     var animationPhase: Double = Double.random(in: 0...2 * .pi)  // Random starting phase
     var animationSpeed: Double = Double.random(in: 0.5...1.5)    // Random speed multiplier
     var animationRadius: Double = Double.random(in: 10...30)     // Random movement range
+    var isAnimating: Bool = false  // Only animate if volume is above threshold
     
     static func == (lhs: ColorBrush, rhs: ColorBrush) -> Bool {
         lhs.id == rhs.id
     }
     
-    // Update the floating animation based on time
-    mutating func updateFloatingAnimation(time: TimeInterval) {
-        // Circular motion pattern
-        let xOffset = CGFloat(animationRadius * sin(time * animationSpeed + animationPhase))
-        let yOffset = CGFloat(animationRadius * cos(time * 0.7 * animationSpeed + animationPhase))
-        offset = CGSize(width: xOffset, height: yOffset)
+    // MARK: - Codable Implementation
+    
+    enum CodingKeys: String, CodingKey {
+        case id, position, color, size, opacity
+        case animationPhase, animationSpeed, animationRadius
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        // Decode ID
+        id = try container.decode(UUID.self, forKey: .id)
+        
+        // Decode position - need to handle CGPoint
+        let positionData = try container.decode([String: CGFloat].self, forKey: .position)
+        position = CGPoint(x: positionData["x"] ?? 0, y: positionData["y"] ?? 0)
+        
+        // Decode color - need to handle SwiftUI Color
+        let colorData = try container.decode([String: Double].self, forKey: .color)
+        let red = colorData["red"] ?? 0
+        let green = colorData["green"] ?? 0
+        let blue = colorData["blue"] ?? 0
+        let alpha = colorData["alpha"] ?? 1
+        color = Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+        
+        // Decode simple properties
+        size = try container.decode(CGFloat.self, forKey: .size)
+        opacity = try container.decode(Double.self, forKey: .opacity)
+        animationPhase = try container.decode(Double.self, forKey: .animationPhase)
+        animationSpeed = try container.decode(Double.self, forKey: .animationSpeed)
+        animationRadius = try container.decode(Double.self, forKey: .animationRadius)
+        
+        // Initialize other properties with defaults
+        offset = .zero
+        isAnimating = false
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        // Encode ID
+        try container.encode(id, forKey: .id)
+        
+        // Encode position - need to handle CGPoint
+        let positionData: [String: CGFloat] = ["x": position.x, "y": position.y]
+        try container.encode(positionData, forKey: .position)
+        
+        // Encode color - need to handle SwiftUI Color
+        // Convert Color to UIColor to get components
+        let uiColor = UIColor(color)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        
+        let colorData: [String: Double] = [
+            "red": Double(red),
+            "green": Double(green),
+            "blue": Double(blue),
+            "alpha": Double(alpha)
+        ]
+        try container.encode(colorData, forKey: .color)
+        
+        // Encode simple properties
+        try container.encode(size, forKey: .size)
+        try container.encode(opacity, forKey: .opacity)
+        try container.encode(animationPhase, forKey: .animationPhase)
+        try container.encode(animationSpeed, forKey: .animationSpeed)
+        try container.encode(animationRadius, forKey: .animationRadius)
+    }
+    
+    // Update the floating animation based on time and volume level
+    mutating func updateFloatingAnimation(time: TimeInterval, volumeLevel: CGFloat) {
+        // Only animate if volume is above threshold (0.45)
+        if volumeLevel > 0.45 {
+            isAnimating = true
+            
+            // Adjust movement size based on volume for more dynamic effect
+            let adjustedRadius = animationRadius * Double(1.0 + volumeLevel * 0.5)
+            
+            // Circular motion pattern
+            let xOffset = CGFloat(adjustedRadius * sin(time * animationSpeed + animationPhase))
+            let yOffset = CGFloat(adjustedRadius * cos(time * 0.7 * animationSpeed + animationPhase))
+            
+            // Gradually move to the new position for smoother transitions
+            let targetOffset = CGSize(width: xOffset, height: yOffset)
+            let interpolation: CGFloat = 0.1  // Smooth transition factor
+            
+            offset.width += (targetOffset.width - offset.width) * interpolation
+            offset.height += (targetOffset.height - offset.height) * interpolation
+        } else if isAnimating {
+            // Gradually return to center when volume drops below threshold
+            let interpolation: CGFloat = 0.05
+            offset.width *= (1.0 - interpolation)
+            offset.height *= (1.0 - interpolation)
+            
+            // Stop considering it animating once it's very close to center
+            if abs(offset.width) < 0.5 && abs(offset.height) < 0.5 {
+                isAnimating = false
+                offset = .zero
+            }
+        }
     }
 }
 
@@ -41,9 +147,7 @@ protocol BackgroundPaintingStrategy {
 
 // MARK: - Painting Style Enum
 enum PaintingStyle: String, CaseIterable, Identifiable {
-    case ribbons = "Ribbons"
     case bubbles = "Bubbles"
-    case waves = "Waves"
     
     var id: String { self.rawValue }
 }
@@ -68,8 +172,10 @@ class BackgroundPainter: ObservableObject {
     private var animationTime: TimeInterval = 0
     private var lastUpdateTime: Date = Date()
     
-    // Track if audio level is significant enough to add new brushes
-    private var shouldAddBrushes = false
+    // Audio level tracking
+    private var currentAudioLevel: CGFloat = 0.0
+    private let brushThreshold: CGFloat = 0.5       // Much higher threshold for creating new brushes
+    private let animationThreshold: CGFloat = 0.45  // Much higher threshold for animating existing brushes
     
     init() {
         startFloatingAnimation()
@@ -109,11 +215,11 @@ class BackgroundPainter: ObservableObject {
         // Update animation time (slow motion)
         animationTime += deltaTime * 0.2  // Slow motion factor
         
-        // Update each brush's position
+        // Update each brush's position with current audio level for intensity
         for i in 0..<brushes.count {
             if i < brushes.count {  // Safety check for concurrent modifications
                 var brush = brushes[i]
-                brush.updateFloatingAnimation(time: animationTime)
+                brush.updateFloatingAnimation(time: animationTime, volumeLevel: currentAudioLevel)
                 brushes[i] = brush
             }
         }
@@ -144,15 +250,47 @@ class BackgroundPainter: ObservableObject {
         }
     }
     
+    func loadBackground(from data: Data?) {
+        guard let data = data else {
+            // If no data is provided, just clear the canvas
+            clearCanvas()
+            return
+        }
+        
+        do {
+            let loadedBrushes = try JSONDecoder().decode([ColorBrush].self, from: data)
+            withAnimation {
+                brushes = loadedBrushes
+            }
+            // Start animation for loaded brushes
+            isActive = true
+            startFloatingAnimation()
+        } catch {
+            print("Error loading background: \(error.localizedDescription)")
+            clearCanvas()
+        }
+    }
+    
     func update(frequency: Float, level: CGFloat, color: Color, in screenSize: CGSize) {
         guard isActive else { return }
         
-        // Only add new brushes when audio level is significant
-        shouldAddBrushes = level > 0.1
+        // Update the current audio level for animations
+        // Use smoothing to avoid jerky changes
+        let smoothing: CGFloat = 0.3
+        currentAudioLevel = currentAudioLevel * (1 - smoothing) + level * smoothing
+        
+        // Apply additional frequency-based threshold adjustment
+        // Lower frequencies often have more ambient energy, so require higher threshold
+        let frequencyFactor: CGFloat = min(1.0, CGFloat(frequency) / 1000.0)
+        let adjustedThreshold = brushThreshold * (1.2 - frequencyFactor * 0.4)
+        
+        // Only add new brushes when audio level is above the adjusted threshold
+        let shouldAddBrushes = level > adjustedThreshold
         
         // Add new brushes at a controlled rate to avoid filling the canvas too quickly
         updateCounter += 1
-        if updateCounter >= updateFrequency && shouldAddBrushes {
+        // Use the frequency-adjusted threshold for brush creation
+        if updateCounter >= updateFrequency && level > adjustedThreshold {
             updateCounter = 0
             
             // Add new brushes based on the current strategy
@@ -177,12 +315,6 @@ class BackgroundPainter: ObservableObject {
         }
     }
     
-    func cycleToNextStyle() {
-        let allStyles = PaintingStyle.allCases
-        guard let currentIndex = allStyles.firstIndex(of: currentStyle) else { return }
-        let nextIndex = (currentIndex + 1) % allStyles.count
-        currentStyle = allStyles[nextIndex]
-    }
 }
 
 // MARK: - Default Implementation of Background Painting Strategy
@@ -194,72 +326,18 @@ struct DefaultPaintingStrategy: BackgroundPaintingStrategy {
         screenSize: CGSize,
         strategy: PaintingStyle
     ) -> [ColorBrush] {
-        switch strategy {
-        case .ribbons:
-            return createRibbonBrushes(frequency: frequency, level: level, color: color, screenSize: screenSize)
-        case .bubbles:
-            return createBubbleBrushes(frequency: frequency, level: level, color: color, screenSize: screenSize)
-        case .waves:
-            return createWaveBrushes(frequency: frequency, level: level, color: color, screenSize: screenSize)
-        }
+        return createBrushes(frequency: frequency, level: level, color: color, screenSize: screenSize)
     }
     
-    // Strategy 1: Ribbons - horizontal color streaks that extend across the screen
-    private func createRibbonBrushes(
+    
+    // Create bubble brushes - circular spots that appear at random locations
+    private func createBrushes(
         frequency: Float,
         level: CGFloat,
         color: Color,
         screenSize: CGSize
     ) -> [ColorBrush] {
-        // Only create ribbons when there's significant audio
-        guard level > 0.1 else { return [] }
-        
-        // Create 1-2 ribbons at a time to allow gradual filling
-        let numberOfRibbons = min(Int(level * 2) + 1, 2)
-        
-        var newBrushes: [ColorBrush] = []
-        
-        for _ in 0..<numberOfRibbons {
-            // Randomize height position but ensure good distribution across the screen
-            let ySection = CGFloat.random(in: 0...4) / 4.0  // Divide screen into 5 sections
-            let y = screenSize.height * ySection + CGFloat.random(in: -20...20)  // Add some randomness
-            let position = CGPoint(x: screenSize.width * 0.5, y: y)
-            
-            // Vary the size based on audio level and a bit of randomness
-            let size = (15.0 + level * 25.0) * CGFloat.random(in: 0.8...1.2)
-            
-            // Slightly vary the ribbon color
-            let hueAdjust = Double.random(in: -0.05...0.05)
-            let baseColor = UIColor(color)
-            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            baseColor.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
-            let adjustedColor = Color(hue: Double(h) + hueAdjust, 
-                                     saturation: Double(s), 
-                                     brightness: Double(b), 
-                                     opacity: Double(a))
-            
-            let brush = ColorBrush(
-                position: position,
-                color: adjustedColor,
-                size: size,
-                opacity: 0.7  // Fixed opacity for persistent visual elements
-            )
-            
-            newBrushes.append(brush)
-        }
-        
-        return newBrushes
-    }
-    
-    // Strategy 2: Bubbles - circular spots that appear at random locations
-    private func createBubbleBrushes(
-        frequency: Float,
-        level: CGFloat,
-        color: Color,
-        screenSize: CGSize
-    ) -> [ColorBrush] {
-        // Only create bubbles when there's audio
-        guard level > 0.05 else { return [] }
+        // (volume threshold is now controlled by the BackgroundPainter class)
         
         // Create just 1-3 bubbles per update to gradually fill the canvas
         let numberOfBubbles = min(Int(level * 3) + 1, 3)
@@ -300,58 +378,6 @@ struct DefaultPaintingStrategy: BackgroundPaintingStrategy {
         return newBrushes
     }
     
-    // Strategy 3: Waves - flowing patterns that move across the screen from bottom to top
-    private func createWaveBrushes(
-        frequency: Float,
-        level: CGFloat,
-        color: Color,
-        screenSize: CGSize
-    ) -> [ColorBrush] {
-        // Only create waves when there's audio
-        guard level > 0.05 else { return [] }
-        
-        var newBrushes: [ColorBrush] = []
-        
-        // Create waves at different heights to fill the screen more gradually
-        let numberOfWaves = 2  // Just add a couple each time
-        
-        for _ in 0..<numberOfWaves {
-            // Position waves at random heights
-            let yPosition = CGFloat.random(in: 0...screenSize.height)
-            
-            // Create wave positions with a pattern that depends on frequency
-            let frequencyFactor = CGFloat(frequency) / 2000.0
-            let xPosition = CGFloat.random(in: 0...screenSize.width)
-            
-            let position = CGPoint(x: xPosition, y: yPosition)
-            
-            // Size based on audio level
-            let size = 15.0 + level * 50.0
-            
-            // Make color variations based on position on screen
-            let baseColor = UIColor(color)
-            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            baseColor.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
-            
-            // Vary color based on vertical position
-            let hueAdjust = Double(yPosition) / Double(screenSize.height) * 0.2
-            let adjustedColor = Color(hue: Double(h) + hueAdjust, 
-                                     saturation: Double(s), 
-                                     brightness: Double(b), 
-                                     opacity: Double(a))
-            
-            let brush = ColorBrush(
-                position: position,
-                color: adjustedColor,
-                size: size,
-                opacity: 0.7  // Fixed opacity for persistence
-            )
-            
-            newBrushes.append(brush)
-        }
-        
-        return newBrushes
-    }
 }
 
 // MARK: - Background Canvas View
@@ -366,36 +392,15 @@ struct BackgroundCanvasView: View {
                 .opacity(0.5)
                 .edgesIgnoringSafeArea(.all)
             
-            // Render each brush as a shape
+            // Render each brush as a circle (bubble)
             ForEach(painter.brushes) { brush in
-                switch painter.currentStyle {
-                case .ribbons:
-                    Capsule()
-                        .fill(brush.color)
-                        .frame(width: screenSize.width * 1.5, height: brush.size)
-                        .position(brush.position)
-                        .offset(brush.offset)  // Apply floating animation offset
-                        .opacity(brush.opacity)
-                        .blur(radius: brush.size * 0.1)  // Lighter blur for better visibility
-                        
-                case .bubbles:
-                    Circle()
-                        .fill(brush.color)
-                        .frame(width: brush.size, height: brush.size)
-                        .position(brush.position)
-                        .offset(brush.offset)  // Apply floating animation offset
-                        .opacity(brush.opacity)
-                        .blur(radius: brush.size * 0.1)  // Lighter blur
-                        
-                case .waves:
-                    Ellipse()  // More elliptical for wave shape
-                        .fill(brush.color)
-                        .frame(width: brush.size, height: brush.size * 0.7)
-                        .position(brush.position)
-                        .offset(brush.offset)  // Apply floating animation offset
-                        .opacity(brush.opacity)
-                        .blur(radius: brush.size * 0.15)
-                }
+                Circle()
+                    .fill(brush.color)
+                    .frame(width: brush.size, height: brush.size)
+                    .position(brush.position)
+                    .offset(brush.offset)  // Apply floating animation offset
+                    .opacity(brush.opacity)
+                    .blur(radius: brush.size * 0.1)  // Lighter blur
             }
         }
         .drawingGroup()  // Use Metal rendering for better performance

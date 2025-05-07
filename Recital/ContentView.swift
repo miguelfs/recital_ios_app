@@ -35,7 +35,22 @@ struct HapticButtonStyle: ButtonStyle {
 struct ContentView: View {
     @StateObject private var audioRecorder = AudioRecorder()
     @StateObject private var backgroundPainter = BackgroundPainter()
+    @StateObject private var recordingManager: RecordingManager
     @State private var viewSize: CGSize = .zero
+    @State private var showingRecordingsList = false
+    @State private var showingNamePrompt = false
+    @State private var recordingName = ""
+    
+    init() {
+        // Create RecordingManager with backgroundPainter
+        let manager = RecordingManager()
+        _recordingManager = StateObject(wrappedValue: manager)
+    }
+    
+    // Called when the view appears to connect components
+    private func connectComponents() {
+        recordingManager.setBackgroundPainter(backgroundPainter)
+    }
     
     // Timer for updating background during recording
     @State private var backgroundUpdateTimer: Timer?
@@ -53,33 +68,38 @@ struct ContentView: View {
                 
                 // Main content
                 VStack(spacing: 30) {
-                    // Style selector - only visible when recording
-                    if audioRecorder.isRecording {
-                        VStack {
-                            Text(backgroundPainter.currentStyle.rawValue)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 4)
-                                .padding(.horizontal, 12)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.gray.opacity(0.15))
-                                )
-                                .onTapGesture {
-                                    backgroundPainter.cycleToNextStyle()
-                                }
+                    // Top bar with title and recordings button
+                    HStack {
+                        Spacer()
+                        
+                        if !audioRecorder.isRecording {
+                            // Title only appears when not recording for cleaner UI
+                            Text("Recital")
+                                .font(.system(size: 48, weight: .thin, design: .monospaced))
+                                .foregroundColor(.purple.opacity(0.8))
+                                .shadow(color: .black.opacity(0.2), radius: 2, x: 1, y: 1)
+                                .transition(.opacity)
                         }
-                        .padding(.top, 10)
-                        .transition(.opacity)
-                    } else {
-                        // Title only appears when not recording for cleaner UI
-                        Text("Recital")
-                            .font(.system(size: 48, weight: .thin, design: .monospaced))
-                            .foregroundColor(.purple.opacity(0.8))
-                            .padding(.top, 20)
-                            .shadow(color: .black.opacity(0.2), radius: 2, x: 1, y: 1)
-                            .transition(.opacity)
+                        
+                        Spacer()
+                        
+                        // Recordings list button
+                        Button(action: {
+                            showingRecordingsList = true
+                        }) {
+                            Image(systemName: "list.bullet")
+                                .font(.system(size: 22))
+                                .foregroundColor(.purple)
+                                .frame(width: 44, height: 44)
+                                .background(
+                                    Circle()
+                                        .fill(Color.white.opacity(0.15))
+                                        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+                                )
+                        }
+                        .padding(.trailing, 20)
                     }
+                    .padding(.top, 20)
                     
                     Spacer()
                     
@@ -110,8 +130,8 @@ struct ContentView: View {
                                                 lineWidth: 3
                                             )
                                             .frame(
-                                                width: 140 + (audioRecorder.audioLevel * 150) * CGFloat(index) / 3,
-                                                height: 140 + (audioRecorder.audioLevel * 150) * CGFloat(index) / 3
+                                                width: 140 + (max(0, audioRecorder.audioLevel - 0.7) * 300) * CGFloat(index) / 3,
+                                                height: 140 + (max(0, audioRecorder.audioLevel - 0.7) * 300) * CGFloat(index) / 3
                                             )
                                             .animation(
                                                 .spring(response: 0.3, dampingFraction: 0.6, blendDuration: 0)
@@ -137,6 +157,7 @@ struct ContentView: View {
                         Button(action: {
                             if audioRecorder.isRecording {
                                 stopRecording()
+                                showingNamePrompt = true
                             } else {
                                 startRecording()
                             }
@@ -259,12 +280,41 @@ struct ContentView: View {
             }
             .onAppear {
                 viewSize = geo.size
+                connectComponents()
             }
             .onChange(of: geo.size) { _, newSize in
                 viewSize = newSize
             }
             .onDisappear {
                 stopBackgroundUpdates()
+            }
+            // Show recordings list
+            .sheet(isPresented: $showingRecordingsList) {
+                RecordingListView(recordingManager: recordingManager)
+            }
+            // Show name prompt after recording
+            .alert("Save Recording", isPresented: $showingNamePrompt) {
+                TextField("Recording name", text: $recordingName)
+                
+                Button("Cancel", role: .cancel) {
+                    recordingName = ""
+                }
+                
+                Button("Save") {
+                    // Serialize background data
+                    let backgroundData: Data? = try? JSONEncoder().encode(backgroundPainter.brushes)
+                    
+                    // Use the entered name or a default name if empty
+                    let name = recordingName.isEmpty ? "Recording \(recordingManager.recordings.count + 1)" : recordingName
+                    
+                    // Save the recording
+                    recordingManager.saveRecording(name: name, backgroundData: backgroundData)
+                    
+                    // Reset name field
+                    recordingName = ""
+                }
+            } message: {
+                Text("Enter a name for your recording")
             }
         }
     }
@@ -325,16 +375,14 @@ struct ContentView: View {
     private func updateBackgroundPainting() {
         guard audioRecorder.isRecording else { return }
         
-        // Only update with significant audio to prevent noise from causing unwanted painting
-        if audioRecorder.audioLevel > 0.1 {
-            // Update the background painting with current audio data
-            backgroundPainter.update(
-                frequency: audioRecorder.dominantFrequency,
-                level: audioRecorder.audioLevel,
-                color: audioRecorder.frequencyColor,
-                in: viewSize
-            )
-        }
+        // Always update with current audio level (the painter will handle thresholding)
+        // This allows the painter to track the audio level even when it's below the threshold
+        backgroundPainter.update(
+            frequency: audioRecorder.dominantFrequency,
+            level: audioRecorder.audioLevel,
+            color: audioRecorder.frequencyColor,
+            in: viewSize
+        )
     }
 }
 
