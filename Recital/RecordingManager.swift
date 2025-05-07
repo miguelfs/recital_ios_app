@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AVFoundation
+import Combine
 
 struct Recording: Identifiable, Codable {
     var id: String
@@ -11,6 +12,7 @@ struct Recording: Identifiable, Codable {
         return documentsDirectory.appendingPathComponent("\(id).m4a")
     }
     var backgroundData: Data? // Serialized background data
+    var transcription: String? // Transcription text
     
     var formattedDate: String {
         let formatter = DateFormatter()
@@ -28,17 +30,40 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var playbackProgress: Double = 0
     @Published var playbackDuration: Double = 1
     @Published var previewedBrushId: String?  // ID of the brush being previewed
+    @Published var currentTranscription: String = ""
+    @Published var isTranscribing: Bool = false
     
     var audioPlayer: AVAudioPlayer?
     private weak var backgroundPainter: BackgroundPainter?
     private var playbackTimer: Timer?
     private var previewTimer: Timer?  // Timer to auto-stop preview
     
+    // Transcription service
+    let transcriptionService = TranscriptionService()
+    
     init(backgroundPainter: BackgroundPainter? = nil) {
         self.backgroundPainter = backgroundPainter
         super.init()
         loadRecordings()
+        
+        // Subscribe to transcription service updates
+        transcriptionService.$transcriptionText
+            .receive(on: RunLoop.main)
+            .sink { [weak self] text in
+                self?.currentTranscription = text
+            }
+            .store(in: &cancellables)
+        
+        transcriptionService.$isTranscribing
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isTranscribing in
+                self?.isTranscribing = isTranscribing
+            }
+            .store(in: &cancellables)
     }
+    
+    // Cancellables for Combine subscriptions
+    private var cancellables = Set<AnyCancellable>()
     
     func setBackgroundPainter(_ painter: BackgroundPainter) {
         self.backgroundPainter = painter
@@ -47,11 +72,20 @@ class RecordingManager: NSObject, ObservableObject {
     // MARK: - Recording Management
     
     func saveRecording(name: String, backgroundData: Data?, recordingId: String) {
+        // Get any transcription from live transcription
+        var initialTranscription: String? = nil
+        
+        let liveText = transcriptionService.liveTranscription
+        if !liveText.isEmpty && liveText != "Listening..." && !liveText.contains("Error:") {
+            initialTranscription = liveText
+        }
+        
         let recording = Recording(
             id: recordingId,  // Use the provided ID
             name: name,
             date: Date(),
-            backgroundData: backgroundData
+            backgroundData: backgroundData,
+            transcription: initialTranscription
         )
         
         // Copy the temporary recording to a permanent location
@@ -71,9 +105,46 @@ class RecordingManager: NSObject, ObservableObject {
                 // Add to recordings list and save metadata
                 recordings.append(recording)
                 saveRecordingsMetadata()
+                
+                // Start transcription in the background if we don't have one already
+                if initialTranscription == nil {
+                    transcribeRecording(recording)
+                }
             }
         } catch {
             print("Error saving recording: \(error.localizedDescription)")
+        }
+    }
+    
+    // Start transcription for a recording
+    func transcribeRecording(_ recording: Recording) {
+        // Skip if we already have a transcription
+        if recording.transcription != nil && !recording.transcription!.isEmpty {
+            return
+        }
+        
+        // Start the transcription
+        transcriptionService.transcribeAudioFile(url: recording.audioUrl, recordingId: recording.id) { [weak self] result in
+            guard let self = self else { return }
+            
+            switch result {
+            case .success(let transcription):
+                // Update the recording with the transcription
+                if let index = self.recordings.firstIndex(where: { $0.id == recording.id }) {
+                    DispatchQueue.main.async {
+                        self.recordings[index].transcription = transcription
+                        self.saveRecordingsMetadata()
+                        
+                        // Update current transcription if this is the currently playing recording
+                        if self.currentlyPlaying?.id == recording.id {
+                            self.currentTranscription = transcription
+                        }
+                    }
+                }
+                
+            case .failure(let error):
+                print("Transcription failed: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -146,6 +217,15 @@ class RecordingManager: NSObject, ObservableObject {
             if let backgroundPainter = backgroundPainter {
                 backgroundPainter.loadBackground(from: recording.backgroundData)
             }
+            
+            // Set the current transcription
+            if let transcription = recording.transcription {
+                currentTranscription = transcription
+            } else {
+                // If no transcription yet, start transcription
+                currentTranscription = "Transcribing..."
+                transcribeRecording(recording)
+            }
         } catch {
             print("Error starting playback: \(error.localizedDescription)")
         }
@@ -157,6 +237,7 @@ class RecordingManager: NSObject, ObservableObject {
         isPreviewing = false
         previewedBrushId = nil
         stopProgressTimer()
+        currentTranscription = ""
     }
     
     // MARK: - Preview Functions

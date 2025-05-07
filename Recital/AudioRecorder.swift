@@ -33,6 +33,9 @@ class AudioRecorder: NSObject, ObservableObject {
     private var frequencySamples: Int = 0
     private var maxAudioLevel: CGFloat = 0.0
     
+    // Transcription service reference
+    var transcriptionService: TranscriptionService?
+    
     // Public computed properties for summary data
     var averageFrequency: Float {
         return frequencySamples > 0 ? frequencySum / Float(frequencySamples) : 0
@@ -146,6 +149,9 @@ class AudioRecorder: NSObject, ObservableObject {
 
             // Set up audio engine for buffer access
             startAudioEngine()
+            
+            // Start live transcription if service is available
+            transcriptionService?.startLiveTranscription()
         } catch {
             print("Could not start recording: \(error.localizedDescription)")
         }
@@ -160,6 +166,9 @@ class AudioRecorder: NSObject, ObservableObject {
 
         // Stop audio engine
         stopAudioEngine()
+        
+        // Stop live transcription
+        transcriptionService?.stopLiveTranscription()
     }
 
     // MARK: - Haptic Feedback

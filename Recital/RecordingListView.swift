@@ -8,6 +8,7 @@ struct RecordingListView: View {
     @State private var showingRenameDialog = false
     @State private var recordingToRename: Recording?
     @State private var newName = ""
+    @State private var expandedRecordingId: String? = nil
     
     // Playback progress is now handled by RecordingManager
     
@@ -63,59 +64,124 @@ struct RecordingListView: View {
     
     private func recordingRow(for recording: Recording) -> some View {
         let isCurrentlyPlaying = recordingManager.currentlyPlaying?.id == recording.id && recordingManager.isPlaying
+        let isExpanded = expandedRecordingId == recording.id
         
-        return HStack {
-            // Play/Pause button
-            Button(action: {
-                if isCurrentlyPlaying {
-                    recordingManager.stopPlayback()
-                } else {
-                    recordingManager.startPlayback(recording: recording)
-                }
-            }) {
-                Image(systemName: isCurrentlyPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(isCurrentlyPlaying ? .red : .green)
-            }
-            .buttonStyle(BorderlessButtonStyle())
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(recording.name)
-                    .font(.headline)
-                    .lineLimit(1)
-                
-                Text(recording.formattedDate)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
-            
-            if editMode == .active {
+        return VStack(spacing: 0) {
+            HStack {
+                // Play/Pause button
                 Button(action: {
+                    if isCurrentlyPlaying {
+                        recordingManager.stopPlayback()
+                    } else {
+                        recordingManager.startPlayback(recording: recording)
+                    }
+                }) {
+                    Image(systemName: isCurrentlyPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundColor(isCurrentlyPlaying ? .red : .green)
+                }
+                .buttonStyle(BorderlessButtonStyle())
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recording.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    
+                    Text(recording.formattedDate)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                // Transcription indicator - only show if we have a transcription
+                if let transcription = recording.transcription, !transcription.isEmpty {
+                    Button(action: {
+                        withAnimation {
+                            expandedRecordingId = isExpanded ? nil : recording.id
+                        }
+                    }) {
+                        Image(systemName: "captions.bubble\(isExpanded ? ".fill" : "")")
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(BorderlessButtonStyle())
+                }
+                
+                if editMode == .active {
+                    Button(action: {
+                        recordingToRename = recording
+                        newName = recording.name
+                        showingRenameDialog = true
+                    }) {
+                        Image(systemName: "pencil")
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(BorderlessButtonStyle())
+                }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if editMode == .active {
                     recordingToRename = recording
                     newName = recording.name
                     showingRenameDialog = true
-                }) {
-                    Image(systemName: "pencil")
-                        .foregroundColor(.blue)
-                }
-                .buttonStyle(BorderlessButtonStyle())
-            }
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if editMode == .active {
-                recordingToRename = recording
-                newName = recording.name
-                showingRenameDialog = true
-            } else {
-                if isCurrentlyPlaying {
-                    recordingManager.stopPlayback()
                 } else {
-                    recordingManager.startPlayback(recording: recording)
+                    if isCurrentlyPlaying {
+                        recordingManager.stopPlayback()
+                    } else {
+                        recordingManager.startPlayback(recording: recording)
+                    }
                 }
+            }
+            
+            // Transcription section - only show if expanded
+            if isExpanded, let transcription = recording.transcription, !transcription.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Transcription:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal)
+                    
+                    ScrollView {
+                        Text(transcription)
+                            .font(.system(size: 14))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                    }
+                    .frame(height: 80)
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 8)
+                .transition(.opacity)
+            }
+            
+            // If no transcription is available but we're playing this recording
+            if isExpanded && (recording.transcription == nil || recording.transcription!.isEmpty) && isCurrentlyPlaying {
+                VStack(alignment: .leading, spacing: 4) {
+                    if recordingManager.isTranscribing {
+                        Text("Transcribing...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal)
+                    } else {
+                        Text("No transcription available")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal)
+                        
+                        Button("Generate Transcription") {
+                            recordingManager.transcribeRecording(recording)
+                        }
+                        .font(.caption)
+                        .padding(.top, 2)
+                        .padding(.horizontal)
+                    }
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 8)
+                .transition(.opacity)
             }
         }
     }
@@ -177,6 +243,20 @@ struct RecordingListView: View {
                 }
             }
             .frame(height: 4)
+            
+            // Show transcription if available
+            if !recordingManager.currentTranscription.isEmpty {
+                ScrollView {
+                    Text(recordingManager.currentTranscription)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                }
+                .frame(height: 60)
+                .background(Color(UIColor.tertiarySystemBackground))
+            }
         }
         .background(Color(UIColor.secondarySystemBackground))
     }
