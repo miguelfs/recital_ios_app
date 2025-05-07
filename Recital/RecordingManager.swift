@@ -3,7 +3,7 @@ import SwiftUI
 import AVFoundation
 
 struct Recording: Identifiable, Codable {
-    var id: String = UUID().uuidString
+    var id: String
     var name: String
     var date: Date
     var audioUrl: URL {
@@ -24,12 +24,15 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var recordings: [Recording] = []
     @Published var currentlyPlaying: Recording?
     @Published var isPlaying = false
+    @Published var isPreviewing = false
     @Published var playbackProgress: Double = 0
     @Published var playbackDuration: Double = 1
+    @Published var previewedBrushId: String?  // ID of the brush being previewed
     
     var audioPlayer: AVAudioPlayer?
     private weak var backgroundPainter: BackgroundPainter?
     private var playbackTimer: Timer?
+    private var previewTimer: Timer?  // Timer to auto-stop preview
     
     init(backgroundPainter: BackgroundPainter? = nil) {
         self.backgroundPainter = backgroundPainter
@@ -43,8 +46,9 @@ class RecordingManager: NSObject, ObservableObject {
     
     // MARK: - Recording Management
     
-    func saveRecording(name: String, backgroundData: Data?) {
+    func saveRecording(name: String, backgroundData: Data?, recordingId: String) {
         let recording = Recording(
+            id: recordingId,  // Use the provided ID
             name: name,
             date: Date(),
             backgroundData: backgroundData
@@ -93,6 +97,12 @@ class RecordingManager: NSObject, ObservableObject {
             recordings.remove(at: index)
             saveRecordingsMetadata()
         }
+        
+        // Remove the associated bubble from the background painter
+        if let painter = backgroundPainter {
+            // Remove bubbles that have this recording ID
+            painter.removeBrushesWithRecordingId(recording.id)
+        }
     }
     
     func renameRecording(_ recording: Recording, newName: String) {
@@ -110,6 +120,9 @@ class RecordingManager: NSObject, ObservableObject {
             return
         }
         
+        // Stop any preview that might be playing
+        stopPreview()
+        
         setupAudioSession()
         
         do {
@@ -120,6 +133,7 @@ class RecordingManager: NSObject, ObservableObject {
             // Update state
             currentlyPlaying = recording
             isPlaying = true
+            isPreviewing = false
             
             // Update playback duration
             playbackDuration = audioPlayer?.duration ?? 1.0
@@ -140,7 +154,92 @@ class RecordingManager: NSObject, ObservableObject {
     func stopPlayback() {
         audioPlayer?.stop()
         isPlaying = false
+        isPreviewing = false
+        previewedBrushId = nil
         stopProgressTimer()
+    }
+    
+    // MARK: - Preview Functions
+    
+    // Start preview playback for a specific bubble/brush
+    func previewRecordingForBrush(withId recordingId: String) {
+        // Stop any existing playback or preview
+       stopPlayback()
+       stopPreview()
+        
+        // Find the recording that matches this ID
+        guard let recording = recordings.first(where: { $0.id == recordingId }) else {
+            print("No recording found for ID: \(recordingId)")
+            return
+        }
+        
+        // Note: We no longer provide haptic feedback here because it's now provided
+        // immediately when the bubble is pressed in the onPressingChanged callback
+        
+       setupAudioSession()
+        
+        do {
+            audioPlayer = try AVAudioPlayer(contentsOf: recording.audioUrl)
+            audioPlayer?.delegate = self
+            
+            // Calculate a position more toward the middle of the recording
+            let duration = audioPlayer?.duration ?? 0
+            if duration > 1.0 {
+                // If longer than 1 second, start 1/3 of the way through 
+                let previewPoint = duration / 3.0
+                audioPlayer?.currentTime = previewPoint
+            }
+            
+            // Set up a fade in effect
+            audioPlayer?.setVolume(0, fadeDuration: 0)
+            audioPlayer?.play()
+            audioPlayer?.setVolume(1, fadeDuration: 0.1) // Fade in over 0.5 seconds
+            
+            // Update state
+            currentlyPlaying = recording
+            isPreviewing = true
+            isPlaying = false  // Not a full playback
+            previewedBrushId = recordingId
+            
+            // Update progress tracking
+            playbackDuration = duration
+            playbackProgress = audioPlayer?.currentTime ?? 0
+            startProgressTimer()
+            
+            // Set up a timer to automatically stop preview after a few seconds
+            previewTimer?.invalidate()
+            previewTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+                self?.stopPreview()
+            }
+        } catch {
+            print("Error starting preview: \(error.localizedDescription)")
+        }
+    }
+    
+    func stopPreview() {
+        // If we're previewing, fade out before stopping
+        if isPreviewing, let player = audioPlayer {
+            // Fade out over 0.5 seconds
+            player.setVolume(0, fadeDuration: 0.5)
+            
+            // Schedule stopping after fade completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                player.stop()
+                self.isPreviewing = false
+                self.previewedBrushId = nil
+                self.stopProgressTimer()
+            }
+        } else {
+            // Just stop immediately if not previewing
+            audioPlayer?.stop()
+            isPreviewing = false
+            previewedBrushId = nil
+            stopProgressTimer()
+        }
+        
+        // Cancel any pending preview timer
+        previewTimer?.invalidate()
+        previewTimer = nil
     }
     
     // MARK: - Playback Progress Tracking

@@ -8,13 +8,15 @@ struct ColorBrush: Identifiable, Equatable, Codable {
     var color: Color
     var size: CGFloat
     var opacity: Double
+    var recordingId: String?  // Optional ID linking to the associated recording
     
-    init(id: UUID = UUID(), position: CGPoint, color: Color, size: CGFloat, opacity: Double) {
+    init(id: UUID = UUID(), position: CGPoint, color: Color, size: CGFloat, opacity: Double, recordingId: String? = nil) {
         self.id = id
         self.position = position
         self.color = color
         self.size = size
         self.opacity = opacity
+        self.recordingId = recordingId
     }
     
     // Animation properties
@@ -35,7 +37,7 @@ struct ColorBrush: Identifiable, Equatable, Codable {
     // MARK: - Codable Implementation
     
     enum CodingKeys: String, CodingKey {
-        case id, position, color, size, opacity
+        case id, position, color, size, opacity, recordingId
         case animationPhase, animationSpeed, animationRadius
         case secondaryPhase, tertiaryPhase, buoyancyFactor, driftFactor
     }
@@ -70,6 +72,9 @@ struct ColorBrush: Identifiable, Equatable, Codable {
         tertiaryPhase = try container.decodeIfPresent(Double.self, forKey: .tertiaryPhase) ?? Double.random(in: 0...2 * .pi)
         buoyancyFactor = try container.decodeIfPresent(Double.self, forKey: .buoyancyFactor) ?? Double.random(in: 0.8...1.3)
         driftFactor = try container.decodeIfPresent(Double.self, forKey: .driftFactor) ?? Double.random(in: -0.3...0.3)
+        
+        // Decode recordingId (optional)
+        recordingId = try container.decodeIfPresent(String.self, forKey: .recordingId)
         
         // Initialize other properties with defaults
         offset = .zero
@@ -115,6 +120,11 @@ struct ColorBrush: Identifiable, Equatable, Codable {
         try container.encode(tertiaryPhase, forKey: .tertiaryPhase)
         try container.encode(buoyancyFactor, forKey: .buoyancyFactor)
         try container.encode(driftFactor, forKey: .driftFactor)
+        
+        // Encode recordingId if present
+        if let recordingId = recordingId {
+            try container.encode(recordingId, forKey: .recordingId)
+        }
     }
     
     // Update the floating animation based on time - now with much more realistic bubble physics
@@ -248,6 +258,9 @@ class BackgroundPainter: ObservableObject {
     private let brushThreshold: CGFloat = 0.5       // Much higher threshold for creating new brushes
     private let animationThreshold: CGFloat = 0.45  // Much higher threshold for animating existing brushes
     
+    // Reference to the recording manager for bubble interaction
+    private weak var recordingManager: RecordingManager?
+    
     // Key for storing background state in UserDefaults
     private let backgroundStateKey = "com.recital.backgroundState"
     
@@ -261,6 +274,11 @@ class BackgroundPainter: ObservableObject {
         // Load any saved background state
         loadBackgroundState()
         startFloatingAnimation()
+    }
+    
+    // Set the recording manager reference for bubble interaction
+    func setRecordingManager(_ manager: RecordingManager) {
+        self.recordingManager = manager
     }
     
     // MARK: - Persistence
@@ -402,7 +420,7 @@ class BackgroundPainter: ObservableObject {
     }
     
     // Add a single bubble at the end of recording that represents the entire recording
-    func addSummaryBubble(averageFrequency: Float, maxLevel: CGFloat, in screenSize: CGSize) {
+    func addSummaryBubble(averageFrequency: Float, maxLevel: CGFloat, in screenSize: CGSize, recordingId: String) {
         // Generate a position that won't overlap too much with existing bubbles
         let position = findOptimalBubblePosition(in: screenSize)
         
@@ -413,12 +431,13 @@ class BackgroundPainter: ObservableObject {
         // Determine color based on frequency ranges
         let color = colorForFrequency(averageFrequency)
         
-        // Create the bubble
+        // Create the bubble with recording ID association
         let bubble = ColorBrush(
             position: position,
             color: color,
             size: size,
-            opacity: 0.7  // Higher opacity for more visibility
+            opacity: 0.7,  // Higher opacity for more visibility
+            recordingId: recordingId
         )
         
         // Add the bubble with animation
@@ -440,6 +459,30 @@ class BackgroundPainter: ObservableObject {
         
         // Save the background state
         saveBackgroundState()
+    }
+    
+    // Remove brushes associated with a specific recording ID
+    func removeBrushesWithRecordingId(_ recordingId: String) {
+        // Find and remove all brushes with the specified recording ID
+        let beforeCount = brushes.count
+        
+        // Use withAnimation to make the removal visual
+        withAnimation(.easeOut(duration: 0.5)) {
+            brushes.removeAll { brush in
+                brush.recordingId == recordingId
+            }
+        }
+        
+        // Only save if we actually removed something
+        if brushes.count < beforeCount {
+            // Save the background state after removal
+            saveBackgroundState()
+            
+            // If all bubbles are gone, deactivate the background painter
+            if brushes.isEmpty {
+                isActive = false
+            }
+        }
     }
     
     // Allow switching between different styles (bubbles/waves)
@@ -684,7 +727,11 @@ struct DefaultPaintingStrategy: BackgroundPaintingStrategy {
 // MARK: - Background Canvas View
 struct BackgroundCanvasView: View {
     @ObservedObject var painter: BackgroundPainter
+    @ObservedObject var recordingManager: RecordingManager
     let screenSize: CGSize
+    
+    // State for tracking which bubble is being pressed
+    @State private var pressedBrushId: UUID? = nil
     
     var body: some View {
         ZStack {
@@ -706,6 +753,54 @@ struct BackgroundCanvasView: View {
                             .offset(brush.offset)  // Apply floating animation offset
                             .opacity(brush.opacity)
                             .blur(radius: brush.size * 0.1)  // Lighter blur for bubbles
+                            // Scale effect when pressed
+                            .scaleEffect(pressedBrushId == brush.id ? 1.15 : 1.0)
+                            // Use a custom gesture recognizer that combines press and release detection
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { _ in
+                                        // Start pressing
+                                        if pressedBrushId != brush.id, let recordingId = brush.recordingId {
+                                            // Visual feedback while pressing
+                                            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                                                pressedBrushId = brush.id
+                                            }
+                                            
+                                            // Initial haptic feedback
+                                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                                            generator.prepare()
+                                            generator.impactOccurred()
+                                            
+                                            // Start playing after a slight delay (0.2s)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                                if pressedBrushId == brush.id { // Still pressing?
+                                                    recordingManager.previewRecordingForBrush(withId: recordingId)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .onEnded { _ in
+                                        // Finger released
+                                        if pressedBrushId == brush.id {
+                                            // Stop preview with haptic feedback if it was playing
+                                            if recordingManager.isPreviewing, 
+                                               recordingManager.previewedBrushId == brush.recordingId {
+                                                // Provide release haptic feedback
+                                                let releaseGenerator = UIImpactFeedbackGenerator(style: .light)
+                                                releaseGenerator.prepare()
+                                                releaseGenerator.impactOccurred()
+                                                
+                                                // Stop the preview
+                                                recordingManager.stopPreview()
+                                            }
+                                            
+                                            // Animate back to normal size
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                                pressedBrushId = nil
+                                            }
+                                        }
+                                    }
+                            )
                     } else {
                         // Wave shape (ellipse - more horizontal)
                         Ellipse()
@@ -721,12 +816,87 @@ struct BackgroundCanvasView: View {
                                     -10 + (brush.offset.width / CGFloat(brush.animationRadius)) * 20)
                                 )
                             )
+                            // Scale effect when pressed
+                            .scaleEffect(pressedBrushId == brush.id ? 1.15 : 1.0)
+                            // Use a custom gesture recognizer that combines press and release detection
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { _ in
+                                        // Start pressing
+                                        if pressedBrushId != brush.id, let recordingId = brush.recordingId {
+                                            // Visual feedback while pressing
+                                            withAnimation(.spring(response: 0.2, dampingFraction: 0.6)) {
+                                                pressedBrushId = brush.id
+                                            }
+                                            
+                                            // Initial haptic feedback
+                                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                                            generator.prepare()
+                                            generator.impactOccurred()
+                                            
+                                            // Start playing after a slight delay (0.2s)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                                if pressedBrushId == brush.id { // Still pressing?
+                                                    recordingManager.previewRecordingForBrush(withId: recordingId)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .onEnded { _ in
+                                        // Finger released
+                                        if pressedBrushId == brush.id {
+                                            // Stop preview with haptic feedback if it was playing
+                                            if recordingManager.isPreviewing, 
+                                               recordingManager.previewedBrushId == brush.recordingId {
+                                                // Provide release haptic feedback
+                                                let releaseGenerator = UIImpactFeedbackGenerator(style: .light)
+                                                releaseGenerator.prepare()
+                                                releaseGenerator.impactOccurred()
+                                                
+                                                // Stop the preview
+                                                recordingManager.stopPreview()
+                                            }
+                                            
+                                            // Animate back to normal size
+                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                                pressedBrushId = nil
+                                            }
+                                        }
+                                    }
+                            )
                     }
                 }
                 // Add a common shadow effect for both styles
                 .shadow(color: brush.color.opacity(0.3), radius: 3, x: 1, y: 1)
+                // Add a pulsating highlight to the bubble that's being previewed
+                .overlay(
+                    Group {
+                        if recordingManager.previewedBrushId == brush.recordingId && brush.recordingId != nil {
+                            if painter.currentStyle == .bubbles {
+                                Circle()
+                                    .stroke(brush.color.opacity(0.8), lineWidth: 3)
+                                    .frame(width: brush.size + 15, height: brush.size + 15)
+                            } else {
+                                Ellipse()
+                                    .stroke(brush.color.opacity(0.8), lineWidth: 3)
+                                    .frame(width: (brush.size * 1.7) + 15, height: (brush.size * 0.6) + 15)
+                            }
+                        }
+                    }
+                    .opacity(recordingManager.isPreviewing ? 1 : 0)
+                    .animation(
+                        recordingManager.isPreviewing ? 
+                            Animation.easeInOut(duration: 0.8).repeatForever(autoreverses: true) : 
+                            .default, 
+                        value: recordingManager.isPreviewing
+                    )
+                )
             }
         }
         .drawingGroup()  // Use Metal rendering for better performance
+        // Pass the recordingManager to the painter when view appears
+        .onAppear {
+            painter.setRecordingManager(recordingManager)
+        }
     }
 }

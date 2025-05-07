@@ -63,7 +63,7 @@ struct ContentView: View {
                     .edgesIgnoringSafeArea(.all)
                 
                 // Background Canvas for painting effects
-                BackgroundCanvasView(painter: backgroundPainter, screenSize: geo.size)
+                BackgroundCanvasView(painter: backgroundPainter, recordingManager: recordingManager, screenSize: geo.size)
                     .edgesIgnoringSafeArea(.all)
                 
                 // Main content
@@ -301,14 +301,25 @@ struct ContentView: View {
                 }
                 
                 Button("Save") {
-                    // Serialize background data
-                    let backgroundData: Data? = try? JSONEncoder().encode(backgroundPainter.brushes)
-                    
                     // Use the entered name or a default name if empty
                     let name = recordingName.isEmpty ? "Recording \(recordingManager.recordings.count + 1)" : recordingName
                     
-                    // Save the recording
-                    recordingManager.saveRecording(name: name, backgroundData: backgroundData)
+                    // Generate a unique ID for this recording
+                    let newRecordingId = UUID().uuidString
+                    
+                    // Add a bubble for this recording
+                    backgroundPainter.addSummaryBubble(
+                        averageFrequency: audioRecorder.averageFrequency,
+                        maxLevel: audioRecorder.maxLevel,
+                        in: viewSize,
+                        recordingId: newRecordingId
+                    )
+                    
+                    // Serialize background data after adding the bubble
+                    let backgroundData: Data? = try? JSONEncoder().encode(backgroundPainter.brushes)
+                    
+                    // Save the recording with its ID
+                    recordingManager.saveRecording(name: name, backgroundData: backgroundData, recordingId: newRecordingId)
                     
                     // Reset name field
                     recordingName = ""
@@ -347,17 +358,13 @@ struct ContentView: View {
         // Stop the background update timer
         stopBackgroundUpdates()
         
-        // Add a summary bubble based on the recording stats
-        backgroundPainter.addSummaryBubble(
-            averageFrequency: audioRecorder.averageFrequency,
-            maxLevel: audioRecorder.maxLevel,
-            in: viewSize
-        )
-        
         // Add animation for background transition
         withAnimation(.easeInOut(duration: 0.5)) {
             // Any additional animations when stopping recording
         }
+        
+        // Note: We now add the summary bubble in the save prompt 
+        // to ensure it has the correct recording ID
     }
     
     // Start the timer that updates the background painting
