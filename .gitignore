@@ -1,0 +1,71 @@
+
+.DS_Store
+build/
+DerivedData/
+*.xcworkspace
+!default.xcworkspace
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/
+Package.resolved
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+fastlane/report.json
+
+# Archives
+*.xcarchive
+
+# Provisioning Profiles
+*.mobileprovision
+*.provisionprofile
+
+# Symbolication
+*.dSYM.zip
+*.bcsymbolmap
+
+# Playgrounds
+timeline.xctimeline
+playground.xcworkspace
+
+# IDE Preferences
+*.idea/
+*.swp
+*.swo
+*.orig
+*.mode1v3
+*.pbxuser
+*.perspectivev3
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swm
+*.swo
+*.swn
+*.bak
+*.old
+*.orig
+*.log
+
+# macOS Files
+*.DS_Store
+.AppleDouble
+.LSOverride
