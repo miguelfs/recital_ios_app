@@ -136,21 +136,30 @@ struct RecordingListView: View {
             }
             
             // Transcription section - only show if expanded
-            if isExpanded, let transcription = recording.transcription, !transcription.isEmpty {
+            if isExpanded, let _ = recording.transcriptionText, !recording.transcriptionText!.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Transcription:")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.horizontal)
                     
-                    ScrollView {
-                        Text(transcription)
+                    // Only play the recording if the current transcription isn't shown elsewhere
+                    if recordingManager.isPlaying && recordingManager.currentlyPlaying?.id == recording.id {
+                        // Show with word timestamps if playing
+                        TimestampedTranscriptionView(recordingManager: recordingManager)
                             .font(.system(size: 14))
-                            .foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
+                            .frame(height: 80)
+                    } else {
+                        // Show plain text if not playing
+                        ScrollView {
+                            Text(recording.transcriptionText!)
+                                .font(.system(size: 14))
+                                .foregroundColor(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal)
+                        }
+                        .frame(height: 80)
                     }
-                    .frame(height: 80)
                 }
                 .padding(.top, 4)
                 .padding(.bottom, 8)
@@ -246,16 +255,10 @@ struct RecordingListView: View {
             
             // Show transcription if available
             if !recordingManager.currentTranscription.isEmpty {
-                ScrollView {
-                    Text(recordingManager.currentTranscription)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                }
-                .frame(height: 60)
-                .background(Color(UIColor.tertiarySystemBackground))
+                // Use our timestamped transcription view that highlights the current word
+                TimestampedTranscriptionView(recordingManager: recordingManager)
+                    .font(.caption)
+                    .frame(height: 60)
             }
         }
         .background(Color(UIColor.secondarySystemBackground))

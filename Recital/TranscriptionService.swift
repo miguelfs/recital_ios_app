@@ -19,6 +19,7 @@ class TranscriptionService: ObservableObject {
     @Published var transcriptionText = ""
     @Published var liveTranscription = ""
     @Published var permissionStatus = "Unknown" // Track permission status
+    @Published var currentTimestampedTranscription: TimestampedTranscription?
     
     // Transcription error types
     enum TranscriptionError: Error {
@@ -33,8 +34,10 @@ class TranscriptionService: ObservableObject {
     }
     
     // For storing transcriptions
-    private let transcriptionCacheKey = "com.recital.transcriptions"
-    private var transcriptionCache: [String: String] = [:]
+    private let plainTranscriptionCacheKey = "com.recital.transcriptions"
+    private let timestampedTranscriptionCacheKey = "com.recital.timestampedTranscriptions"
+    private var plainTranscriptionCache: [String: String] = [:]
+    private var timestampedTranscriptionCache: [String: TimestampedTranscription] = [:]
     
     // Speech recognition components
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -100,15 +103,31 @@ class TranscriptionService: ObservableObject {
     
     // Get cached transcription if available
     func getTranscription(for recordingId: String) -> String? {
-        return transcriptionCache[recordingId]
+        return plainTranscriptionCache[recordingId]
+    }
+    
+    // Get cached timestamped transcription if available
+    func getTimestampedTranscription(for recordingId: String) -> TimestampedTranscription? {
+        return timestampedTranscriptionCache[recordingId]
     }
     
     // Transcribe an existing audio file
     func transcribeAudioFile(url: URL, recordingId: String, completion: @escaping (Result<String, Error>) -> Void) {
-        // Check if we already have a transcription
-        if let existingTranscription = transcriptionCache[recordingId] {
-            transcriptionText = existingTranscription
-            completion(.success(existingTranscription))
+        // Check if we already have a timestamped transcription
+        if let existingTranscription = timestampedTranscriptionCache[recordingId] {
+            transcriptionText = existingTranscription.fullText
+            currentTimestampedTranscription = existingTranscription
+            completion(.success(existingTranscription.fullText))
+            return
+        }
+        
+        // Check if we have plain text (for backward compatibility)
+        if let existingText = plainTranscriptionCache[recordingId] {
+            transcriptionText = existingText
+            // Create estimated timestamps
+            let estimatedTranscription = TimestampedTranscription.fromPlainText(existingText)
+            currentTimestampedTranscription = estimatedTranscription
+            completion(.success(existingText))
             return
         }
         
@@ -172,8 +191,16 @@ class TranscriptionService: ObservableObject {
                     if !self.transcriptionText.isEmpty && self.transcriptionText != "Transcribing..." {
                         // We have partial results, let's use them instead of failing
                         let partialText = self.transcriptionText
-                        self.transcriptionCache[recordingId] = partialText
+                        
+                        // Create a basic timestamped transcription with estimated timestamps
+                        let estimatedTranscription = TimestampedTranscription.fromPlainText(partialText)
+                        self.currentTimestampedTranscription = estimatedTranscription
+                        
+                        // Save both formats
+                        self.plainTranscriptionCache[recordingId] = partialText
+                        self.timestampedTranscriptionCache[recordingId] = estimatedTranscription
                         self.saveTranscriptionCache()
+                        
                         completion(.success(partialText))
                         return
                     }
@@ -200,11 +227,21 @@ class TranscriptionService: ObservableObject {
             DispatchQueue.main.async {
                 self.transcriptionText = transcription
                 
-                // If this is the final result, save it to the cache
+                // If this is the final result, save it to the cache with word timing
                 if result.isFinal {
                     self.isTranscribing = false
-                    self.transcriptionCache[recordingId] = transcription
+                    
+                    // Create a timestamped transcription
+                    let timestampedTranscription = TimestampedTranscription.from(result: result)
+                    
+                    // Update the current transcription
+                    self.currentTimestampedTranscription = timestampedTranscription
+                    
+                    // Save both formats
+                    self.plainTranscriptionCache[recordingId] = transcription
+                    self.timestampedTranscriptionCache[recordingId] = timestampedTranscription
                     self.saveTranscriptionCache()
+                    
                     completion(.success(transcription))
                 }
             }
@@ -351,31 +388,59 @@ class TranscriptionService: ObservableObject {
         isTranscribing = false
     }
     
-    // Save transcriptions to cache
+    // Save plain text transcription to cache
     func saveTranscription(for recordingId: String, text: String) {
-        transcriptionCache[recordingId] = text
+        plainTranscriptionCache[recordingId] = text
+        saveTranscriptionCache()
+    }
+    
+    // Save timestamped transcription to cache
+    func saveTimestampedTranscription(for recordingId: String, transcription: TimestampedTranscription) {
+        timestampedTranscriptionCache[recordingId] = transcription
+        // Also save the plain text for backward compatibility
+        plainTranscriptionCache[recordingId] = transcription.fullText
         saveTranscriptionCache()
     }
     
     // Load transcriptions from cache
     private func loadTranscriptionCache() {
-        if let data = UserDefaults.standard.data(forKey: transcriptionCacheKey) {
+        // Load plain text transcriptions
+        if let data = UserDefaults.standard.data(forKey: plainTranscriptionCacheKey) {
             do {
                 let cache = try JSONDecoder().decode([String: String].self, from: data)
-                transcriptionCache = cache
+                plainTranscriptionCache = cache
             } catch {
-                print("Error loading transcription cache: \(error.localizedDescription)")
+                print("Error loading plain transcription cache: \(error.localizedDescription)")
+            }
+        }
+        
+        // Load timestamped transcriptions
+        if let data = UserDefaults.standard.data(forKey: timestampedTranscriptionCacheKey) {
+            do {
+                let cache = try JSONDecoder().decode([String: TimestampedTranscription].self, from: data)
+                timestampedTranscriptionCache = cache
+            } catch {
+                print("Error loading timestamped transcription cache: \(error.localizedDescription)")
             }
         }
     }
     
     // Save transcriptions to cache
     private func saveTranscriptionCache() {
+        // Save plain text transcriptions
         do {
-            let data = try JSONEncoder().encode(transcriptionCache)
-            UserDefaults.standard.set(data, forKey: transcriptionCacheKey)
+            let data = try JSONEncoder().encode(plainTranscriptionCache)
+            UserDefaults.standard.set(data, forKey: plainTranscriptionCacheKey)
         } catch {
-            print("Error saving transcription cache: \(error.localizedDescription)")
+            print("Error saving plain transcription cache: \(error.localizedDescription)")
+        }
+        
+        // Save timestamped transcriptions
+        do {
+            let data = try JSONEncoder().encode(timestampedTranscriptionCache)
+            UserDefaults.standard.set(data, forKey: timestampedTranscriptionCacheKey)
+        } catch {
+            print("Error saving timestamped transcription cache: \(error.localizedDescription)")
         }
     }
 }

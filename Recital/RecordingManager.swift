@@ -12,13 +12,23 @@ struct Recording: Identifiable, Codable {
         return documentsDirectory.appendingPathComponent("\(id).m4a")
     }
     var backgroundData: Data? // Serialized background data
-    var transcription: String? // Transcription text
+    var transcription: String? // Plain text transcription (for backward compatibility)
+    var timestampedTranscription: TimestampedTranscription? // Transcription with word timing
     
     var formattedDate: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+    
+    // Helper to get the transcription text regardless of which format is available
+    var transcriptionText: String? {
+        if let timestamped = timestampedTranscription {
+            return timestamped.fullText
+        } else {
+            return transcription
+        }
     }
 }
 
@@ -32,6 +42,7 @@ class RecordingManager: NSObject, ObservableObject {
     @Published var previewedBrushId: String?  // ID of the brush being previewed
     @Published var currentTranscription: String = ""
     @Published var isTranscribing: Bool = false
+    @Published var currentWordIndex: Int? = nil  // Index of word currently being spoken
     
     var audioPlayer: AVAudioPlayer?
     private weak var backgroundPainter: BackgroundPainter?
@@ -74,10 +85,18 @@ class RecordingManager: NSObject, ObservableObject {
     func saveRecording(name: String, backgroundData: Data?, recordingId: String) {
         // Get any transcription from live transcription
         var initialTranscription: String? = nil
+        var timestampedTranscription: TimestampedTranscription? = nil
         
         let liveText = transcriptionService.liveTranscription
         if !liveText.isEmpty && liveText != "Listening..." && !liveText.contains("Error:") {
             initialTranscription = liveText
+            
+            // Create estimated timestamped transcription if we don't have a proper one
+            if let actualTimestamped = transcriptionService.currentTimestampedTranscription {
+                timestampedTranscription = actualTimestamped
+            } else {
+                timestampedTranscription = TimestampedTranscription.fromPlainText(liveText)
+            }
         }
         
         let recording = Recording(
@@ -85,7 +104,8 @@ class RecordingManager: NSObject, ObservableObject {
             name: name,
             date: Date(),
             backgroundData: backgroundData,
-            transcription: initialTranscription
+            transcription: initialTranscription,
+            timestampedTranscription: timestampedTranscription
         )
         
         // Copy the temporary recording to a permanent location
@@ -118,8 +138,23 @@ class RecordingManager: NSObject, ObservableObject {
     
     // Start transcription for a recording
     func transcribeRecording(_ recording: Recording) {
-        // Skip if we already have a transcription
+        // Skip if we already have a timestamped transcription
+        if recording.timestampedTranscription != nil {
+            return
+        }
+        
+        // Skip if we already have a plain text transcription
         if recording.transcription != nil && !recording.transcription!.isEmpty {
+            // Create estimated timestamps for existing plain text
+            let estimatedTranscription = TimestampedTranscription.fromPlainText(recording.transcription!)
+            
+            // Update the recording with estimated timestamps
+            if let index = recordings.firstIndex(where: { $0.id == recording.id }) {
+                DispatchQueue.main.async {
+                    self.recordings[index].timestampedTranscription = estimatedTranscription
+                    self.saveRecordingsMetadata()
+                }
+            }
             return
         }
         
@@ -132,7 +167,13 @@ class RecordingManager: NSObject, ObservableObject {
                 // Update the recording with the transcription
                 if let index = self.recordings.firstIndex(where: { $0.id == recording.id }) {
                     DispatchQueue.main.async {
+                        // Get the timestamped transcription if available
+                        let timestampedTranscription = self.transcriptionService.currentTimestampedTranscription ?? 
+                                                     TimestampedTranscription.fromPlainText(transcription)
+                        
+                        // Update both formats
                         self.recordings[index].transcription = transcription
+                        self.recordings[index].timestampedTranscription = timestampedTranscription
                         self.saveRecordingsMetadata()
                         
                         // Update current transcription if this is the currently playing recording
@@ -219,11 +260,27 @@ class RecordingManager: NSObject, ObservableObject {
             }
             
             // Set the current transcription
-            if let transcription = recording.transcription {
-                currentTranscription = transcription
+            if let timestampedTranscription = recording.timestampedTranscription {
+                currentTranscription = timestampedTranscription.fullText
+                currentWordIndex = nil // DISABLED: Word highlighting temporarily disabled
+            } else if let plainText = recording.transcription {
+                currentTranscription = plainText
+                
+                // TEMPORARILY DISABLED: Word-level highlighting with estimated timestamps
+                /*
+                // Create estimated timestamps if we don't have proper ones
+                let estimatedTranscription = TimestampedTranscription.fromPlainText(plainText)
+                
+                // Update the recording with estimated timestamps
+                if let index = recordings.firstIndex(where: { $0.id == recording.id }) {
+                    recordings[index].timestampedTranscription = estimatedTranscription
+                    saveRecordingsMetadata()
+                }
+                */
             } else {
                 // If no transcription yet, start transcription
                 currentTranscription = "Transcribing..."
+                currentWordIndex = nil
                 transcribeRecording(recording)
             }
         } catch {
@@ -238,6 +295,7 @@ class RecordingManager: NSObject, ObservableObject {
         previewedBrushId = nil
         stopProgressTimer()
         currentTranscription = ""
+        currentWordIndex = nil
     }
     
     // MARK: - Preview Functions
@@ -329,10 +387,46 @@ class RecordingManager: NSObject, ObservableObject {
         // Cancel any existing timer
         stopProgressTimer()
         
-        // Start a new timer
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        // Start a new timer with higher frequency for smoother word highlighting
+        playbackTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self = self, let player = self.audioPlayer else { return }
+            
+            // Update playback progress
             self.playbackProgress = player.currentTime
+            
+            // TEMPORARILY DISABLED: Word highlighting during playback
+            /*
+            // Update the current word if we have timestamped transcription
+            if let recording = self.currentlyPlaying,
+               let timestampedTranscription = recording.timestampedTranscription {
+                
+                // Get the previous word index for change detection
+                let previousWordIndex = self.currentWordIndex
+                
+                // Find the word being spoken at the current time position
+                let newWordIndex = timestampedTranscription.currentWordIndex(at: player.currentTime)
+                
+                // Add stability to word index changes:
+                // 1. Only update if the index changed
+                // 2. Implement a minimum change duration to prevent flickering
+                // 3. Don't allow skipping backwards (words should advance in order)
+                if let newWordIndex = newWordIndex, newWordIndex != previousWordIndex {
+                    // Don't allow going backward in the text (prevents jumps)
+                    // Unless it's a significant change (like seeking in the audio)
+                    if let previousIndex = previousWordIndex, 
+                       newWordIndex < previousIndex && 
+                       abs(newWordIndex - previousIndex) < 5 {
+                        // Skip this update - don't go backward for small changes
+                    } else {
+                        // Apply the change - it's either forward progress or a large jump (like seeking)
+                        self.currentWordIndex = newWordIndex
+                    }
+                }
+            }
+            */
+            
+            // Reset word index to disable highlighting until this feature is fixed
+            self.currentWordIndex = nil
         }
     }
     

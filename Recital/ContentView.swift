@@ -270,19 +270,39 @@ struct ContentView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal)
                                 
-                                ScrollView {
-                                    Text(recordingManager.transcriptionService.liveTranscription.isEmpty ? 
-                                         "Listening..." : recordingManager.transcriptionService.liveTranscription)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding()
-                                        .lineLimit(nil) // Allow multiple lines
-                                        .fixedSize(horizontal: false, vertical: true) // Allow vertical expansion
+                                ScrollViewReader { scrollReader in
+                                    ScrollView {
+                                        VStack {
+                                            Text(recordingManager.transcriptionService.liveTranscription.isEmpty ? 
+                                                "Listening..." : recordingManager.transcriptionService.liveTranscription)
+                                                .font(.system(size: 14))
+                                                .foregroundColor(.secondary)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding()
+                                                .lineLimit(nil) // Allow multiple lines
+                                                .fixedSize(horizontal: false, vertical: true) // Allow vertical expansion
+                                            
+                                            // Add an invisible marker view at the bottom for scrolling
+                                            Rectangle()
+                                                .frame(height: 1)
+                                                .foregroundColor(.clear)
+                                                .id("bottomScrollMarker")
+                                        }
+                                    }
+                                    .background(Color(UIColor.systemBackground).opacity(0.7))
+                                    .cornerRadius(12)
+                                    .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
+                                    .onChange(of: recordingManager.transcriptionService.liveTranscription) { _, _ in
+                                        // When the transcription changes, scroll to the bottom
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            scrollReader.scrollTo("bottomScrollMarker", anchor: .bottom)
+                                        }
+                                    }
+                                    // Ensure we start at the bottom
+                                    .onAppear {
+                                        scrollReader.scrollTo("bottomScrollMarker", anchor: .bottom)
+                                    }
                                 }
-                                .background(Color(UIColor.systemBackground).opacity(0.7))
-                                .cornerRadius(12)
-                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
                             }
                             .padding(.horizontal)
                             .frame(maxHeight: 120)
@@ -298,16 +318,37 @@ struct ContentView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal)
                                 
-                                ScrollView {
-                                    Text(recordingManager.currentTranscription)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding()
+                                // Temporarily disabled word highlighting due to issues with timing
+                                // TimestampedTranscriptionView(recordingManager: recordingManager)
+                                //     .font(.system(size: 14))
+                                
+                                // Using plain text instead until highlighting is fixed
+                                ScrollViewReader { scrollReader in
+                                    ScrollView {
+                                        VStack {
+                                            Text(recordingManager.currentTranscription)
+                                                .font(.system(size: 14))
+                                                .foregroundColor(.secondary)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding()
+                                                .lineLimit(nil)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            
+                                            Rectangle()
+                                                .frame(height: 1)
+                                                .foregroundColor(.clear)
+                                                .id("playbackScrollMarker")
+                                        }
+                                    }
+                                    .onChange(of: recordingManager.currentTranscription) { _, _ in
+                                        withAnimation(.easeOut(duration: 0.2)) {
+                                            scrollReader.scrollTo("playbackScrollMarker", anchor: .bottom)
+                                        }
+                                    }
+                                    .onAppear {
+                                        scrollReader.scrollTo("playbackScrollMarker", anchor: .bottom)
+                                    }
                                 }
-                                .background(Color(UIColor.systemBackground).opacity(0.7))
-                                .cornerRadius(12)
-                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 1)
                             }
                             .padding(.horizontal)
                             .frame(height: 120)
